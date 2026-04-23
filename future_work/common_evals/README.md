@@ -1,4 +1,4 @@
-# Common Evaluation Spec (Vistar)
+# Common Evaluation Spec (Vistaar)
 
 This folder defines a shared evaluation approach so teams can score model responses in a consistent way across projects.
 
