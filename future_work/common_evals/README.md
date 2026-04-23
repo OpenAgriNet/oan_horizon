@@ -93,4 +93,10 @@ For onboarding a new model, metric, or program, no code changes are required in 
 - YAML config (what to run, model/provider, test data, metric wiring)
 - rubric markdown files (metric definitions and scoring guidance)
 
+Example:
+```bash
+npm install promptfoo
+npx promptfoo eval -c amul.yaml
+```
+
 Everything else in the evaluation flow is already structured to work through this configuration layer.
