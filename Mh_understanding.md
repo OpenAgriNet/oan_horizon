@@ -158,7 +158,8 @@
 ============================================================================
 
   Prompt used:
-    - assets/prompts/moderation_system.md
+    - assets/prompts/moderation_system.md (https://github.com/OpenAgriNet/mh-oan-api/blob/mh-dev-2.0/assets/prompts/moderation_system.md)
+    
 
   Exact model used:
     - moderation_agent uses model=LLM_MODEL (same resolution as main agent)
