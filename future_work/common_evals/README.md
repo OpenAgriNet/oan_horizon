@@ -84,3 +84,13 @@ Treat this folder as an evaluation spec:
 - results are comparable and reproducible
 
 That is the foundation needed for consistent model quality governance across Amul, Mahavistaar, and future projects.
+
+## One-Command, Config-Only Workflow
+
+This setup is already designed so the full evaluation pipeline can be run with a single Promptfoo command (using the target YAML config).  
+For onboarding a new model, metric, or program, no code changes are required in the evaluation engine. You only update:
+
+- YAML config (what to run, model/provider, test data, metric wiring)
+- rubric markdown files (metric definitions and scoring guidance)
+
+Everything else in the evaluation flow is already structured to work through this configuration layer.
