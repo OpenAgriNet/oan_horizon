@@ -1,0 +1,44 @@
+description: Amul voice evals based on combined metrics (shared + voice-specific)
+
+prompts:
+  - |
+    Evaluate this candidate response.
+    INPUT: {{input}}
+    OUTPUT: {{output}}
+    EXPECTED: {{expected}}
+    TOPIC: {{topic}}
+
+providers:
+  - openai:gpt-4o
+
+tests: file://data/amul.csv
+
+evaluateOptions:
+  maxConcurrency: 5
+
+assert:
+  # -------- Shared quality --------
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/shared_accuracy_grounding.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/shared_usefulness_clarity.md
+
+  # -------- Voice-specific quality --------
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/voice_brevity.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/voice_ready.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/voice_tone.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/voice_translation_gu.md

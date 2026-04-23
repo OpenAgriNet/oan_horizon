@@ -1,0 +1,3 @@
+id,company,task,topic,advanced_mode,input,output,expected
+mhv_001,MahaVistaar,"Evaluate agri assistant answer",weather,false,"What is rain forecast for next 3 days in Nashik?","Rain chance is low for two days and moderate on day three. Plan spray before expected rain window.", "Forecast aligned + actionable advice"
+mhv_002,MahaVistaar,"Evaluate agri assistant answer",scheme,true,"Tell me drip irrigation subsidy schemes","State and central drip schemes are available; check eligibility by category and required documents on MahaDBT.", "Multi-scheme completeness + eligibility caveat"

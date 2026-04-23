@@ -1,0 +1,3 @@
+id,company,task,topic,advanced_mode,input,output,expected
+amul_001,Amul,"Evaluate dairy advice quality",clinical,false,"My cow has fever since morning","Keep cow in shade, give clean water, and call a vet urgently. Watch breathing and appetite.", "Urgent escalation + safe first aid"
+amul_002,Amul,"Evaluate dairy advice quality",nutrition,true,"How much mineral mix per day?","Give around 50 to 60 grams mineral mixture daily with concentrate feed.", "Specific dosage + practical instruction"

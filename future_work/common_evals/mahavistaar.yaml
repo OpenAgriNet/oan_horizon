@@ -1,0 +1,44 @@
+description: Mahavistaar text evals based on combined metrics (shared + text-specific)
+
+prompts:
+  - |
+    Evaluate this candidate response.
+    INPUT: {{input}}
+    OUTPUT: {{output}}
+    EXPECTED: {{expected}}
+    TOPIC: {{topic}}
+
+providers:
+  - openai:gpt-4o
+
+tests: file://data/mahavistaar.csv
+
+evaluateOptions:
+  maxConcurrency: 8
+
+assert:
+  # -------- Shared quality --------
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/shared_accuracy_grounding.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/shared_usefulness_clarity.md
+
+  # -------- Text-eval-specific quality --------
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/text_process_fidelity.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/text_factual_grounding.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/text_response_usefulness.md
+
+  - type: llm-rubric
+    provider: openai:gpt-4o
+    value: file://prompts/text_language_quality.md

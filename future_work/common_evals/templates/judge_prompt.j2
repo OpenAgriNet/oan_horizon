@@ -1,0 +1,21 @@
+You are an evaluator for {{ company }}.
+
+Task:
+{{ task }}
+
+Topic:
+{{ topic }}
+
+User input:
+{{ input }}
+
+Candidate answer:
+{{ output }}
+
+{% if advanced_mode in [true, "true", "True", 1, "1"] %}
+Evaluate strictly. Check factual precision, missing caveats, and edge-case handling.
+{% else %}
+Evaluate with a simple farmer-friendly quality lens.
+{% endif %}
+
+Return concise scoring notes only.
