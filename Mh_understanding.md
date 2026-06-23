@@ -72,7 +72,7 @@
 │  Settings:                                                         │
 │    - max_tokens=8192                                               │
 │    - parallel_tool_calls=True                                      │
-│    - request_limit=50                                              │
+│    - request_limit=10                                              │
 │    - retries=3                                                     │
 │    - end_strategy='exhaustive'                                     │
 │                                                                    │
