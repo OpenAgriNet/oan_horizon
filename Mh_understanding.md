@@ -320,5 +320,26 @@
       then preventive and curative sections.
       (calls Mahapocra predict API -> advisory API -> store API)
 
+### Code flow :
+
+
+main.py
+├── app.config → Settings() singleton
+├── app.routers.chat
+│   ├── app.services.chat
+│   │   ├── agents.agrinet → Agent("Vistaar Agent") created
+│   │   ├── agents.moderation → Agent("Moderation Agent") created
+│   │   ├── agents.models
+│   │   │   ├── httpx.AsyncClient (shared, module-level)
+│   │   │   ├── ConcurrencyLimiter × 2 (agrinet + moderation)
+│   │   │   ├── vLLM OpenAI clients × 2
+│   │   │   └── Azure OpenAI client × 1  ← crashes here if creds missing
+│   │   └── helpers.langfuse_helper → Langfuse init
+│   └── app.utils → Redis helpers (pool not opened yet)
+├── app.routers.upload
+│   └── app.utils (already cached)
+└── ... (other routers, lighter dependencies)
+
+
 ```
 
