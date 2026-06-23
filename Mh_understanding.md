@@ -1,12 +1,9 @@
 # Documentation: Query Lifetime (mh-oan-api)
 
-```text
-============================================================================
+```text============================================================================
              MAHAVISTAAR OAN - BACKEND AGENTIC ARCHITECTURE
                            (mh-oan-api)
 ============================================================================
-
-
                             ┌─────────────────┐
                             │   CALLER/USER   │
                             └────────┬────────┘
@@ -63,23 +60,39 @@
 │                    PYDANTIC AI AGENT LOOP                          │
 │                                                                    │
 │  Main agent: agrinet_agent (registered name: "Vistaar Agent")      │
-│  Model: LLM_MODEL from agents/models.py via env:                   │
-│    - LLM_PROVIDER=openai -> OpenAIModel(LLM_MODEL_NAME) + OPENAI_API_KEY│
-│    - LLM_PROVIDER=vllm -> OpenAI-compatible INFERENCE_ENDPOINT_URL │
-│    - LLM_PROVIDER=azure-openai -> AsyncAzureOpenAI client +        │
-│      AZURE_OPENAI_* env vars (deployment name as model id)         │
-│  Prompt: agrinet_system.md (+ Jinja context: today_date)           │
+│  Model: AGRINET_MODEL from agents/models.py                        │
+│    Primary:  vLLM endpoint (VLLM_AGRINET_MODEL_URL)                │
+│              model name: LLM_AGRINET_MODEL_NAME                    │
+│              concurrency limit: VLLM_AGRINET_MAX_CONCURRENT (60)   │
+│    Fallback: Azure OpenAI (AZURE_OPENAI_DEPLOYMENT_NAME)           │
+│              triggers on: ModelAPIError, APIError,                 │
+│              ConcurrencyLimitExceeded, UnexpectedModelBehavior     │
+│  Prompt: agrinet_system_{lang_code}.md                             │
+│          (Jinja context: today_date, crop_season)                  │
 │  Settings:                                                         │
-│    - max_tokens=8192                                               │
+│    - max_tokens=32768                                              │
 │    - parallel_tool_calls=True                                      │
 │    - request_limit=10                                              │
 │    - retries=3                                                     │
 │    - end_strategy='exhaustive'                                     │
+│    - instrument=False                                              │
 │                                                                    │
 │  Support agents:                                                   │
-│    - moderation_agent (structured moderation output)               │
-│    - suggestions_agent (List[str], 3–5 strings; search_documents   │
-│      tool only; parallel_tool_calls=False; retries=1)              │
+│    - moderation_agent                                              │
+│        Model: MODERATION_MODEL (same vLLM+Azure fallback pattern,  │
+│               separate endpoint: VLLM_MODERATION_MODEL_URL)        │
+│        vLLM settings: temperature=1.0, max_tokens=1024,            │
+│                       reasoning_effort='low'                       │
+│        retries=3, request_limit=5                                  │
+│        instrument=False                                            │
+│        output: PromptedOutput(QueryModerationResult)               │
+│                                                                    │
+│    - suggestions_agent                                             │
+│        Model: AGRINET_MODEL (same as main agent)                   │
+│        output: NativeOutput(List[str])                             │
+│        retries=3, instrument=True                                  │
+│        end_strategy='exhaustive'                                   │
+│        No tools registered                                         │
 │                                                                    │
 │  Tooling surface (registration order in agents/tools/__init__.py): │
 │    - Glossary: search_terms                                        │
@@ -89,8 +102,9 @@
 │    - Market: mandi_prices                                          │
 │    - Services: agri_services, contact_agricultural_staff           │
 │    - Identity/profile: fetch_agristack_data                        │
-│    - Schemes: get_scheme_codes, get_scheme_info,                   │
-│               get_multiple_schemes_info, get_scheme_status         │
+│    - Schemes: get_scheme_codes, get_scheme_info                    │
+│    - MahaDBT: get_scheme_status                                    │
+│    - Pest detection: analyze_pest_disease_image                    │
 │                                                                    │
 │  Agent loop shape:                                                 │
 │    user_prompt + message_history + deps                            │
@@ -114,19 +128,20 @@
 │  TTS:     Bhashini; source_lang=bhb uses Bhili/cloned voice path   │
 │           (text_to_speech_bhili); else pipeline TTS                │
 │                                                                    │
-│  Post-stream side effect:                                          │
-│    - append newly generated messages and persist history in Redis  │
-│      under key {session_id}_SVA (see app/utils.py)                 │
+│  Post-stream side effects:                                         │
+│    - Append newly generated messages and persist history in Redis  │
+│      under key {session_id}_SVA                                    │
+│    - Moderation messages persisted separately under                │
+│      key {session_id}_SVA_MODERATION                               │
 └────────────────────────────────────────────────────────────────────┘
 ============================================================================
                          EXTERNAL INTEGRATIONS
 ============================================================================
-
   - LLM PROVIDERS
-    - OpenAI (LLM_PROVIDER=openai)
-    - vLLM-compatible endpoint (LLM_PROVIDER=vllm)
-    - Azure OpenAI (LLM_PROVIDER=azure-openai)
-
+    - Primary: vLLM-compatible endpoint (VLLM_AGRINET_MODEL_URL /
+               VLLM_MODERATION_MODEL_URL); OpenAI-compatible API
+    - Fallback: Azure OpenAI (AZURE_OPENAI_ENDPOINT +
+                AZURE_OPENAI_DEPLOYMENT_NAME + AZURE_OPENAI_API_KEY)
   - PLATFORM BACKEND (Beckn/BAP via BAP_ENDPOINT, BAP_ID, BAP_URI)
     - weather
     - mandi
@@ -135,46 +150,39 @@
     - scheme info/codes
     - Agristack farmer data
     - MahaDBT scheme status
-
   - VECTOR SEARCH
     - Marqo (document/video search)
-
   - VOICE / LANGUAGE
     - Bhashini: STT, TTS, translation (incl. suggestions for bhb)
     - Bhili-specific TTS path for code bhb
     - helpers/transcription.transcribe_whisper available but not exposed
       on /api/transcribe/
-
   - GEO
     - Mapbox: geocoding/reverse geocoding for tools
-
   - OBSERVABILITY
     - helpers.telemetry + app.tasks.telemetry (e.g. send_telemetry);
       telemetry API URL in app.config settings
-
-
 ============================================================================
                            MODERATION
 ============================================================================
-
   Prompt used:
-    - assets/prompts/moderation_system.md (https://github.com/OpenAgriNet/mh-oan-api/blob/mh-dev-2.0/assets/prompts/moderation_system.md)
-    
+    - assets/prompts/moderation_system.md
 
-  Exact model used:
-    - moderation_agent uses model=LLM_MODEL (same resolution as main agent)
-    - agents/models.py:
-      - LLM_PROVIDER=openai -> OpenAIModel(LLM_MODEL_NAME)
-      - LLM_PROVIDER=vllm -> OpenAI-compatible endpoint
-      - LLM_PROVIDER=azure-openai -> Azure deployment as model
-    - LLM_MODEL_NAME and provider credentials come from environment (currently using gpt-oss-moderator)
+  Model used:
+    - MODERATION_MODEL (agents/models.py)
+    - Primary:  vLLM endpoint (VLLM_MODERATION_MODEL_URL)
+                model name: LLM_MODERATION_MODEL_NAME
+                concurrency limit: VLLM_MODERATION_MAX_CONCURRENT (100)
+                settings: temperature=1.0, max_tokens=1024,
+                          reasoning_effort='low'
+    - Fallback: Azure OpenAI (same as main agent)
+                triggers on: ModelAPIError, APIError,
+                ConcurrencyLimitExceeded, UnexpectedModelBehavior
 
   Runtime moderation settings:
-    - retries=2
-    - temperature=0.1
-    - max_tokens=128
-    - timeout=5 seconds
-    - instrument=True
+    - retries=3
+    - request_limit=5
+    - instrument=False
 
   Structured output contract (QueryModerationResult):
     - category (one of):
@@ -190,13 +198,9 @@
     - moderation_agent.run(...) executes before agrinet_agent.run_stream(...)
     - moderation result is injected into FarmerContext for main-agent reasoning
     - suggestion generation is triggered only when category == valid_agricultural
-
-
-
 ============================================================================
                       TOOL CALL INPUT OUTPUT
 ============================================================================
-
   Format used by agent:
     - Input  -> tool_name(arguments)
     - Output -> plain text/markdown string returned to the LLM
@@ -301,13 +305,20 @@
       "## MahaDBT Scheme Status Information ..."
       (application status summary + masked IDs)
 
-  12) get_scheme_codes / get_scheme_info / get_multiple_schemes_info
+  12) get_scheme_codes / get_scheme_info
     - Input:
       get_scheme_codes()
-      get_scheme_info(code="XYZ123")
-      get_multiple_schemes_info(query="drip irrigation subsidy")
+      get_scheme_info(scheme_code="XYZ123")
     - Output:
       scheme code/details text blocks used by agent response synthesis
+
+  13) analyze_pest_disease_image
+    - Input:
+      analyze_pest_disease_image(upload_id="pest_5a466793-...")
+    - Output:
+      Formatted text: bold crop name, bold disease/pest name,
+      then preventive and curative sections.
+      (calls Mahapocra predict API -> advisory API -> store API)
 
 ```
 
