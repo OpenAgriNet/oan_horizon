@@ -320,8 +320,9 @@
       then preventive and curative sections.
       (calls Mahapocra predict API -> advisory API -> store API)
 
-### Code flow :
-
+============================================================================
+                      CODE FLOW
+============================================================================
 
 main.py
 ├── app.config → Settings() singleton
