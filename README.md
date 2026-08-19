@@ -1,6 +1,6 @@
 # oan_horizon
 
-Living documentation for OpenAgriNet (OAN): what each bot currently does, how it's
+Some Living AI documentation for OpenAgriNet (OAN): what each bot currently does, how it's
 architected, and what's being planned or discussed next. Two kinds of file live here:
 
 - **`*_understanding.md`** (repo root) — current-state, code-grounded architecture docs.
@@ -20,31 +20,6 @@ architected, and what's being planned or discussed next. Two kinds of file live 
 
 Evaluation (model selection, language readiness, and current pipelines across all
 three bots) is documented once, centrally: [`Evaluation_understanding.md`](Evaluation_understanding.md).
-
-Brief current-state notes, expanded in each doc:
-
-- **BharatVistaar** routes each request through named model aliases
-  (`config/models.yaml` + `agents/model_registry.py`) with weighted/sticky per-use-case
-  routing, capacity-based deflection, and a single-hop failover — more complex than the
-  other two bots' static primary+fallback pattern. Has by far the largest tool surface
-  of the three bots (31 tools — scheme status/grievance flows for PM-KISAN, PMFBY, SHC,
-  SMAM, GFR, SATHI, all Beckn/BAP-network-backed), and a pest/disease image-analysis
-  tool (NPSS) the other bots don't have. Voice is client-orchestrated (separate
-  transcribe/TTS calls around a text-only chat loop), unlike mahaVistaar's more
-  integrated voice pipeline. A real config-design gap remains open — moderation has no
-  fallback path at all today, and an in-flight fix risks regressing a property agrinet's
-  routing already gets right (see `future_work/model_routing_fallback/`). A fix for
-  Indic-script mixing in agrinet's responses is built and verified but not yet merged
-  to `bh-dev` — see `future_work/language_mixing/`. Has **no long-term/cross-session
-  memory** — every conversation starts from zero.
-- **mahaVistaar** is the only bot with real cross-session memory today: mem0 + Qdrant
-  for episodic recall, plus a separate structured farmer-profile store, both wired in
-  as agent tools and gated to logged-in farmers only. See `Mh_understanding.md`'s
-  "LONG-TERM MEMORY" section, and `future_work/memory/` for open questions and
-  speculative future direction.
-- **Amul** is voice-first (RAYA telephony IVR) with a separate web/app text path;
-  session ownership and history persist in Redis with its own claim/refresh/release
-  locking to prevent concurrent requests on one session.
 
 ## Evaluation
 
@@ -77,9 +52,9 @@ Not documented in depth here yet — pointers only:
 
 | Topic | Status |
 |---|---|
-| [`future_work/memory/`](future_work/memory/) | **Exploratory, no decisions made** — a review of memory concepts/industry patterns/mahaVistaar's current state, plus a team whiteboard session folded in. |
-| [`future_work/model_routing_fallback/`](future_work/model_routing_fallback/) | **Risk flagged on an in-flight fix** — `bh-dev` already gets alias-level fallback right for agrinet; the in-flight rework fixing moderation's real gap would regress that property back to per-use-case unless corrected. |
-| [`future_work/language_mixing/`](future_work/language_mixing/) | **Implemented and verified, not yet merged** — constrains agrinet's output to the farmer's script via an allowlist derived from Unicode's own Script property, fixing a real UX/trust problem an earlier hand-picked-allowlist attempt missed. |
+| [`future_work/memory/`](future_work/memory/) | **Exploratory, no decisions made** — a review of memory concepts/industry patterns/mahaVistaar's current state |
+| [`future_work/model_routing_fallback/`](future_work/model_routing_fallback/) | **Risk flagged on an in-flight fix** — how to cleanly route and fallback to LLM models |
+| [`future_work/language_mixing/`](future_work/language_mixing/) | **Implemented and verified, not yet merged** — how to make sure output Indic languages dont mix |
 | [`future_work/language_expansion/`](future_work/language_expansion/) | Spec — readiness evaluation for adding a new language + LLM, human-scored, 800-sample fixed dataset design. Includes a [diversity sampler](future_work/language_expansion/diversity_sampler/) sub-spec. |
 | [`future_work/scheme_input/`](future_work/scheme_input/) | Spec — PDF → structured, searchable scheme records pipeline. |
 | [`future_work/synth_data_personas/`](future_work/synth_data_personas/) | Spec — synthetic farmer persona generation, building on `synth-data-bharat-oan-api`'s existing profile sampling. |
