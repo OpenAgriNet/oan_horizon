@@ -87,10 +87,3 @@ Not documented in depth here yet — pointers only:
 | [`future_work/human_evals_alignment/`](future_work/human_evals_alignment/) | Human eval results in hand (blind, two rounds + QC) — planned next step is DSPy-based automated calibration of the LLM-judge pipeline against them. |
 | [`future_work/scheme_sync/`](future_work/scheme_sync/) | Proposed — replace "paste the full scheme list into every prompt" with a queryable, network-wide tool-search service, generalizing beyond schemes to every tool category. |
 
-## A note on `oan-brain`
-
-There's a separate, local-only knowledge base at `/mnt/raid/gautam/oan-brain/` — an
-AI agent's own working memory across sessions (repo gotchas, environment quirks, task
-history), never pushed anywhere. This repo (`oan_horizon`) is the human-facing,
-version-controlled counterpart: durable, reviewed documentation meant to be read and
-maintained by the team, not an agent's scratch memory.
