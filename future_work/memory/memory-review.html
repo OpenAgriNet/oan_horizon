@@ -1,0 +1,745 @@
+<title>Memory in mahaVistaar</title>
+<style>
+  :root {
+    --bg: #f7f4ee;
+    --surface: #ffffff;
+    --surface-2: #fbf8f2;
+    --text: #23201b;
+    --text-secondary: #6b6355;
+    --border: #e3dccd;
+    --accent: #b0680e;
+    --accent-soft: #f1dfb8;
+    --accent-strong: #8a4f09;
+    --finding: #3d6b63;
+    --finding-soft: #dfe9e6;
+    --code-bg: #f1eee6;
+    --code-text: #4a4438;
+    --shadow: 0 1px 2px rgba(35,32,27,0.06), 0 4px 16px rgba(35,32,27,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1815;
+      --surface: #232019;
+      --surface-2: #1f1c17;
+      --text: #ede7da;
+      --text-secondary: #b4aa97;
+      --border: #3a342a;
+      --accent: #e0a345;
+      --accent-soft: #3a2e18;
+      --accent-strong: #f0b85e;
+      --finding: #7dbcac;
+      --finding-soft: #223330;
+      --code-bg: #29241d;
+      --code-text: #d8cdb8;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1815;
+    --surface: #232019;
+    --surface-2: #1f1c17;
+    --text: #ede7da;
+    --text-secondary: #b4aa97;
+    --border: #3a342a;
+    --accent: #e0a345;
+    --accent-soft: #3a2e18;
+    --accent-strong: #f0b85e;
+    --finding: #7dbcac;
+    --finding-soft: #223330;
+    --code-bg: #29241d;
+    --code-text: #d8cdb8;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.65;
+    margin: 0;
+    padding: 3.5rem 1.5rem 6rem;
+  }
+  .page {
+    max-width: 46rem;
+    margin: 0 auto;
+  }
+  .wide { max-width: 58rem; }
+
+  h1, h2, h3 {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "PT Serif", serif;
+    text-wrap: balance;
+    color: var(--text);
+    font-weight: 600;
+  }
+  header.doc-header h1 {
+    font-size: 2.4rem;
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+  }
+  header.doc-header p.dek {
+    font-size: 1.15rem;
+    color: var(--text-secondary);
+    margin: 0 0 1.25rem;
+    max-width: 42rem;
+  }
+  header.doc-header .meta {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 0;
+  }
+  header.doc-header .meta strong { color: var(--text); font-weight: 600; }
+
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 2rem 0 3rem;
+    box-shadow: var(--shadow);
+  }
+  nav.toc h2 {
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    margin: 0 0 0.75rem;
+    font-weight: 700;
+  }
+  nav.toc ol { margin: 0; padding-left: 1.4rem; }
+  nav.toc li { margin: 0.35rem 0; }
+  nav.toc a { color: var(--text); text-decoration: none; font-weight: 500; }
+  nav.toc a:hover { color: var(--accent-strong); text-decoration: underline; }
+  nav.toc span.sub { color: var(--text-secondary); font-weight: 400; font-size: 0.92em; }
+
+  section.review-section { margin: 3.5rem 0; }
+  section.review-section > .section-num {
+    font-family: Georgia, serif;
+    font-size: 0.95rem;
+    color: var(--accent-strong);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 0.25rem;
+  }
+  h2.section-title { font-size: 1.65rem; margin: 0 0 1.25rem; }
+  h3.sub-title { font-size: 1.2rem; margin: 2rem 0 0.75rem; }
+
+  p { margin: 0 0 1.1rem; }
+  a { color: var(--accent-strong); }
+  strong { font-weight: 650; }
+
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: 0.4rem 0; }
+
+  code, .mono {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 0.12em 0.4em;
+    border-radius: 4px;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 1rem 1.1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+  }
+  pre code { background: none; padding: 0; }
+
+  blockquote {
+    margin: 1.25rem 0;
+    padding: 0.1rem 1.25rem;
+    border-left: 3px solid var(--border);
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  .callout {
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin: 1.5rem 0;
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .callout.finding { border-left-color: var(--finding); background: var(--finding-soft); }
+  .callout .callout-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    color: var(--accent-strong);
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+  .callout.finding .callout-label { color: var(--finding); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1rem;
+    margin: 1.75rem 0;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.2rem;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .stat-num {
+    font-family: Georgia, serif;
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: var(--accent-strong);
+    font-variant-numeric: tabular-nums;
+    display: block;
+  }
+  .stat-card .stat-label {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    margin-top: 0.2rem;
+  }
+
+  .memcard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.9rem;
+    margin: 1.5rem 0 2rem;
+  }
+  .memcard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+  }
+  .memcard h4 {
+    margin: 0 0 0.35rem;
+    font-size: 0.95rem;
+    font-family: Georgia, serif;
+    color: var(--accent-strong);
+  }
+  .memcard p { margin: 0; font-size: 0.87rem; color: var(--text-secondary); }
+
+  .example {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem 1.6rem;
+    margin: 1.75rem 0;
+    box-shadow: var(--shadow);
+  }
+  .example h3 { margin: 0 0 0.15rem; font-size: 1.15rem; }
+  .example .example-tag {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.9rem;
+    display: block;
+  }
+  .example .lesson {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px dashed var(--border);
+    font-size: 0.92rem;
+  }
+  .example .lesson .lesson-label {
+    font-weight: 700;
+    color: var(--finding);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+  .example .sources { font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.8rem; }
+  .example .sources a { color: var(--text-secondary); }
+
+  .table-wrap { overflow-x: auto; margin: 1.5rem 0; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); }
+  tr:last-child td { border-bottom: none; }
+
+  .usecase-list { list-style: none; padding: 0; margin: 1.5rem 0; counter-reset: usecase; }
+  .usecase-list li {
+    counter-increment: usecase;
+    position: relative;
+    padding: 0.9rem 1rem 0.9rem 3rem;
+    margin: 0.6rem 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .usecase-list li::before {
+    content: counter(usecase);
+    position: absolute;
+    left: 1rem;
+    top: 0.9rem;
+    font-family: Georgia, serif;
+    font-weight: 700;
+    color: var(--accent-strong);
+    font-size: 1.05rem;
+  }
+  .usecase-list strong { display: block; margin-bottom: 0.2rem; }
+  .usecase-list span.why { font-size: 0.88rem; color: var(--text-secondary); }
+
+  .priority-list { list-style: none; padding: 0; margin: 1.5rem 0; }
+  .priority-list li {
+    display: flex;
+    gap: 0.9rem;
+    padding: 0.85rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .priority-list li:last-child { border-bottom: none; }
+  .priority-badge {
+    flex-shrink: 0;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    height: fit-content;
+    white-space: nowrap;
+  }
+  .priority-badge.p1 { background: var(--finding-soft); color: var(--finding); }
+  .priority-badge.p2 { background: var(--accent-soft); color: var(--accent-strong); }
+  .priority-badge.p3 { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+  .priority-list strong { display: block; margin-bottom: 0.15rem; }
+  .priority-list span.detail { font-size: 0.88rem; color: var(--text-secondary); }
+
+  .divider { border: none; border-top: 1px solid var(--border); margin: 3rem 0; }
+
+  footer.doc-footer {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 2rem 1rem 4rem; }
+    header.doc-header h1 { font-size: 1.9rem; }
+    .usecase-list li { padding-left: 2.6rem; }
+  }
+
+  .vision-intro {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "PT Serif", serif;
+    font-size: 1.25rem;
+    line-height: 1.55;
+    color: var(--text);
+    margin: 0 0 2.5rem;
+    max-width: 40rem;
+  }
+  .vision-grid { display: flex; flex-direction: column; gap: 1.5rem; margin: 2rem 0; }
+  .vision-card {
+    background: linear-gradient(155deg, var(--surface) 0%, var(--accent-soft) 145%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.75rem 1.9rem;
+    box-shadow: var(--shadow);
+  }
+  .vision-card h3 {
+    font-size: 1.3rem;
+    margin: 0 0 0.9rem;
+    color: var(--accent-strong);
+  }
+  .vision-card p.scenario {
+    font-size: 1.02rem;
+    margin-bottom: 1.1rem;
+  }
+  .vision-card p.scenario em { font-style: italic; color: var(--text); }
+  .vision-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.9rem;
+  }
+  .vision-tag {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+    padding: 0.28rem 0.6rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .vision-card .not-yet {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    border-top: 1px dashed var(--border);
+    padding-top: 0.8rem;
+    margin: 0;
+  }
+  .vision-card .not-yet strong { color: var(--text); font-weight: 650; }
+  .vision-caveat {
+    border-left: 4px solid var(--text-secondary);
+    background: var(--surface-2);
+  }
+  .vision-caveat .callout-label { color: var(--text-secondary) !important; }
+</style>
+
+<div class="page">
+
+<header class="doc-header">
+  <h1>Memory in mahaVistaar</h1>
+  <p class="dek">What "memory" means for an LLM agent, how the best production systems build it, what mahaVistaar's own logs show is happening today, and what's worth building next.</p>
+  <div class="meta">
+    <span><strong>Scope</strong> mahaVistaar (mh-oan-api) + comparison against bharat-oan-api</span>
+    <span><strong>Sources</strong> live production Langfuse traces, direct code review, external research</span>
+    <span><strong>Date</strong> 18 Aug 2026</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#concept">What memory is, and why a stateless model needs one</a></li>
+    <li><a href="#examples">How the best systems elsewhere do it</a> <span class="sub">— ChatGPT, Mem0, Letta, Zep, Alexa+, LangGraph</span></li>
+    <li><a href="#logs">What mahaVistaar's own logs show today</a> <span class="sub">— sampled directly from production</span></li>
+    <li><a href="#usecases">Use cases worth adding</a></li>
+    <li><a href="#current">The current mh-oan-api implementation, and what to build</a></li>
+    <li><a href="#vision">What becomes possible, once memory actually works</a> <span class="sub">— speculative</span></li>
+  </ol>
+</nav>
+
+<section class="review-section" id="concept">
+  <div class="section-num">01</div>
+  <h2 class="section-title">What memory is, and why a stateless model needs one</h2>
+
+  <p>An LLM call is fundamentally stateless: the model knows nothing beyond the tokens sent to it in that one request. Everything that looks like "remembering" in a chat product is an engineering layer built <em>around</em> the model, deciding what from the past to re-inject into the next prompt. Three things get conflated and are worth separating:</p>
+
+  <div class="memcard-grid">
+    <div class="memcard">
+      <h4>Context window</h4>
+      <p>Raw text capacity for one call. Not persistence — close the session and it's gone, and everything in it costs latency/money whether relevant or not.</p>
+    </div>
+    <div class="memcard">
+      <h4>RAG</h4>
+      <p>Retrieval over a <em>static</em> corpus (crop advisories, price sheets). Answers "what does the corpus say" — stateless, query-matched document lookup.</p>
+    </div>
+    <div class="memcard">
+      <h4>Memory</h4>
+      <p>A persistent, <em>mutable</em>, user-scoped store of what the interaction itself produced — facts stated, preferences revealed, advice given — updated as things change.</p>
+    </div>
+    <div class="memcard">
+      <h4>The distinction that matters</h4>
+      <p>RAG is stateless document retrieval. Memory has to manage evolving, sometimes contradictory user state over time.</p>
+    </div>
+  </div>
+
+  <p>The standard academic framing comes from <strong>CoALA</strong> (Cognitive Architectures for Language Agents — Sumers, Yao, Narasimhan &amp; Griffiths, Princeton/DeepMind), which borrows Endel Tulving's memory trichotomy from cognitive psychology and has since become the industry-default vocabulary — Letta, Mem0 and LangChain all build on it:</p>
+
+  <ul>
+    <li><strong>Working memory</strong> — the live, in-context state of the current conversation. Gone when the session ends unless something is deliberately promoted out of it.</li>
+    <li><strong>Episodic memory</strong> — records of specific past events ("on 12 June the farmer asked about pest damage in cotton and was told to apply X"). Timestamped, instance-specific.</li>
+    <li><strong>Semantic memory</strong> — generalized facts abstracted from any one conversation ("this farmer grows cotton and wheat on 2 acres in Yavatmal"). Closer to a profile than a transcript.</li>
+    <li><strong>Procedural memory</strong> — how to do things: learned rules, standing preferences, the agent's own operating conventions.</li>
+  </ul>
+
+  <p>Without an explicit memory layer, a chat system degrades in specific, observable ways: the same identifying questions get re-asked every session; nothing about the service compounds or personalizes over time; a farmer who messages on WhatsApp Monday and calls the voice line Thursday is treated as two strangers; and the agent has no way to reference, quote, or build on its own prior advice — "the fertilizer plan you gave me last month" is simply unanswerable.</p>
+
+  <p>Put plainly: <strong>memory is what you persist</strong> — and whatever a system chooses not to persist becomes a cost the human pays instead, re-explaining the same land, crop, and circumstances every time they need something. The clearest way to think about a farmer's core profile is as a ledger of what they depend on to get a useful answer — kept once, so it's never asked for twice.</p>
+
+  <h3 class="sub-title">The design tradeoffs that actually matter</h3>
+
+  <p><strong>What to store.</strong> A raw transcript is lossless and cheap to write but noisy and expensive to retrieve from, and it re-exposes every raw utterance on every future pull. Extracted facts or periodic summaries are cheaper to retrieve and can be structured — at the cost of fidelity: a bad fact that enters a summary can poison every future turn that relies on it. Most production systems land on a middle position worth naming directly — call it <strong>intentional memory</strong>: deliberately decide what's worth keeping out of everything logged, rather than defaulting to keep-everything or leaving it entirely to whatever the model happens to notice in a given turn.</p>
+
+  <p><strong>When to write.</strong> Writing after every turn maximizes fidelity but adds an extraction call — and a latency/cost tax — to every single message. End-of-session or batched consolidation is cheaper and lets a system reflect over a whole conversation before deciding what's durable. Writing only on an explicit signal ("remember this") is cheapest and most auditable, but misses facts the user never thought to flag.</p>
+
+  <p><strong>How to retrieve.</strong> Pure recency is simple but blind to relevance. Semantic similarity surfaces old-but-relevant facts, at the cost of retrieval latency and occasional confident wrongness. Structured profile fields (crop, district, land size) are cheapest and most reliable — no search needed — but only cover what was modeled in advance. Production systems increasingly don't pick one: Zep merges semantic, keyword, and graph-traversal retrieval via reciprocal rank fusion because no single method is sufficient alone.</p>
+
+  <div class="callout">
+    <span class="callout-label">The real risks</span>
+    <p><strong>Staleness</strong> — a fact recorded once ("grows cotton") silently outliving its truth. <strong>Privacy/consent</strong> — anything stored is personal data needing disclosure and a way to view, correct, or delete it; extraction attacks against agent memory are now an active research area. <strong>Retrieval cost</strong> — every vector search or structured fetch adds latency to every turn, which matters acutely on WhatsApp or a voice call. <strong>Cross-contamination</strong> — one study of shared-state agents found that with no attacker involved at all, careless scoping produced contamination rates of 57–71% between unrelated users' sessions. For a multi-farmer system, strict per-user namespacing isn't optional.</p>
+  </div>
+</section>
+
+<section class="review-section" id="examples">
+  <div class="section-num">02</div>
+  <h2 class="section-title">How the best systems elsewhere do it</h2>
+  <p>Concrete, currently-documented examples — what each actually stores and retrieves, not a generic description — with the one lesson most transferable to a farmer-advisory bot.</p>
+
+  <div class="example">
+    <h3>ChatGPT — Saved Memories + Reference Chat History</h3>
+    <span class="example-tag">Explicit facts, plus a separately-maintained inferred profile</span>
+    <p>Two distinct mechanisms run side by side. <strong>Saved memories</strong> are discrete, user-visible, timestamped entries — added on request or saved proactively when the model judges something durable was said — injected into the system prompt and fully viewable, editable and deletable by the user. <strong>Reference chat history</strong> is a separate, opaque profiling pass: it periodically compiles "Assistant Response Preferences," "Notable Past Conversation Topics," and confidence-scored "Helpful User Insights" (name, profession, location) plus a rolling window of recent conversation summaries — with no interface to inspect or edit individual inferred entries, only an on/off toggle. In 2026 OpenAI added <strong>"Dreaming"</strong>: a background job, run during account idle time, that reconciles and rewrites memory entries rather than only capturing what was explicitly said (a stored "going to Singapore in July" auto-updates to "went to Singapore" once the trip has passed) — OpenAI reported an internal factual-recall eval jumping from 41.5% to 82.8% after shipping it.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      Split explicit, user-controllable facts (crop, land size, district) from softer inferred signals, and give them different consent/visibility treatment. The "Dreaming" idea — periodically reconciling facts against the calendar rather than writing once and trusting it forever — is exactly what a seasonal advisory bot needs.
+    </div>
+    <div class="sources">OpenAI Help Center · Embrace The Red technical teardown · Dreaming V3 coverage</div>
+  </div>
+
+  <div class="example">
+    <h3>Mem0 — open-source memory layer</h3>
+    <span class="example-tag">Extract → consolidate → retrieve, Qdrant + Postgres underneath</span>
+    <p>After each interaction, Mem0 extracts durable facts, reconciles them against what's already stored (updating or superseding contradictions rather than appending blindly), and on the next call retrieves only the relevant subset — never the whole transcript. It orchestrates a vector store (Qdrant by default) for semantic recall plus Postgres for structured history behind a simple add/search API. On the LOCOMO long-conversation benchmark, Mem0's own paper reports a 26% relative accuracy improvement over OpenAI's memory baseline, a 91% reduction in p95 latency, and over 90% token-cost savings versus stuffing full history into context.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      Extracting <code>crop = cotton</code>, <code>district = Yavatmal</code>, <code>land_size = 2 acres</code> as structured, updatable facts — with real contradiction handling when a farmer switches crops — is far cheaper at inference time than re-searching a raw transcript on every WhatsApp message.
+    </div>
+    <div class="sources">mem0.ai · Mem0 paper (arXiv:2504.19413)</div>
+  </div>
+
+  <div class="example">
+    <h3>Letta / MemGPT — memory as an operating system</h3>
+    <span class="example-tag">Core / recall / archival tiers, paged like RAM, disk, and cold storage</span>
+    <p>MemGPT's founding idea, now the production framework Letta: treat the model's context window as scarce RAM and give the system "virtual context management" — paging information in and out the way an OS pages between memory and disk. Three tiers: <strong>core memory</strong>, small and always in-context, editable by the agent's own tool calls; <strong>recall memory</strong>, the full searchable history outside the active context; <strong>archival memory</strong>, long-term storage (Postgres + pgvector) queried by similarity via explicit tool calls. The distinguishing choice is that the agent itself decides when to page memory in and out, rather than a fixed pipeline deciding for it.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      A small, always-injected "core memory" block per farmer (crop, land, location, language) costs almost nothing and guarantees the agent never re-asks the basics mid-conversation, while full advisory history stays in cheaper storage and is pulled in only when a query actually references the past.
+    </div>
+    <div class="sources">MemGPT paper (arXiv:2310.08560) · Letta docs</div>
+  </div>
+
+  <div class="example">
+    <h3>Zep / Graphiti — temporal knowledge-graph memory</h3>
+    <span class="example-tag">Bi-temporal facts, hybrid retrieval, no LLM call in the retrieval path</span>
+    <p>Zep's memory engine, Graphiti, represents facts as nodes and edges in a graph rather than flat text chunks, and is explicitly <strong>bi-temporal</strong>: every fact tracks both when it was true in the real world and when the system learned it. A contradicting new fact <em>invalidates</em> the old one rather than deleting it — the system keeps a full, queryable history of what was true when. Retrieval fuses semantic embedding search, BM25 keyword search, and graph traversal via reciprocal rank fusion, deliberately without an LLM call in the loop, for roughly 300ms p95 latency. On LongMemEval, Zep reports aggregate accuracy improvements up to 18.5% over a full-context baseline (individual tasks over 100% higher), a 90% latency reduction, and context-token usage under 2% of the full-transcript baseline (1.6k vs 115k tokens) — with Zep+GPT-4o at 2.58s median latency against 28.9s for full-context+GPT-4o.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      This is the single most relevant idea in this whole review for agriculture. Truth here is inherently seasonal: "farmer grows cotton" is true for one season and false the next; "farmer applied urea on 14 June" stays permanently true even after harvest. A flat profile store can't represent this and will eventually advise against an outdated crop assumption. Facts need a valid-from/valid-to, not a silent overwrite.
+    </div>
+    <div class="sources">Zep/Graphiti paper (arXiv:2501.13956) · Zep engineering blog</div>
+  </div>
+
+  <div class="example">
+    <h3>Amazon Alexa+ — household-scoped personalization</h3>
+    <span class="example-tag">Bootstrapped from account data, explicit teaching, multi-person constraints</span>
+    <p>Alexa+ combines account-derived context (purchase history, saved addresses, watch/listen history) with explicitly taught durable facts and connected personal data. Amazon's own illustrative example is deliberately multi-person: "if you are planning a dinner for the family, Alexa+ can remember that you love pizza, your daughter is vegetarian, and your partner is gluten-free." Amazon reported roughly double the conversation engagement versus the prior Alexa.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      A single WhatsApp number often serves a whole farm household — a son checking mandi prices, the farmer handling crop advisory. Memory needs to resolve "whose fact is this" under one shared identity the same way Alexa+ resolves competing dietary constraints, and bootstrapping from existing registration/enrollment data (Agristack, scheme enrollment) rather than only learning turn-by-turn is directly available here.
+    </div>
+    <div class="sources">aboutamazon.com — Introducing Alexa+</div>
+  </div>
+
+  <div class="example">
+    <h3>LangGraph — the checkpointer / store split</h3>
+    <span class="example-tag">Short-term thread state vs. a namespaced long-term document store</span>
+    <p>LangGraph formalizes the split at the infrastructure level: a <strong>checkpointer</strong> persists a single conversation thread's state so it can pause and resume, while a separate <strong>store</strong> holds long-term memories as JSON documents organized by <strong>namespace</strong> — explicitly recommended to be the user's identity, not the conversation thread, so every store operation for a given farmer hits the same namespace no matter how many separate sessions they've had.</p>
+    <div class="lesson">
+      <span class="lesson-label">Lesson for mahaVistaar</span>
+      Namespace by farmer identity, never by session or thread id — this is precisely the discipline that section&nbsp;3 shows is currently at risk.
+    </div>
+    <div class="sources">LangChain — Launching Long-Term Memory Support in LangGraph</div>
+  </div>
+</section>
+
+<section class="review-section" id="logs">
+  <div class="section-num">03</div>
+  <h2 class="section-title">What mahaVistaar's own logs show today</h2>
+  <p>Sampled directly from mahaVistaar's production Langfuse instance (public API, not a static export) rather than assumed from code.</p>
+
+  <div class="stat-grid">
+    <div class="stat-card"><span class="stat-num">1,024,647</span><span class="stat-label">total traces logged to date</span></div>
+    <div class="stat-card"><span class="stat-num">251,089</span><span class="stat-label">sessions logged to date</span></div>
+    <div class="stat-card"><span class="stat-num">409</span><span class="stat-label">distinct farmer IDs seen in one 24h window</span></div>
+    <div class="stat-card"><span class="stat-num">~49%</span><span class="stat-label">of a 701-request sample carried no farmer identity at all</span></div>
+  </div>
+
+  <h3 class="sub-title">What's actually being logged</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Trace name</th><th>What it is</th><th>Context window it's given</th></tr></thead>
+      <tbody>
+        <tr><td><code>vistaar-agent</code></td><td>The main advisory answer (text channel)</td><td>Current query + moderation verdict + farmer ID/link status only — no visible prior-turn text in the traced prompt</td></tr>
+        <tr><td><code>agent.moderation</code></td><td>Content-safety gate before the answer</td><td>Deliberately narrow: at most the immediately preceding turn plus the current one</td></tr>
+        <tr><td><code>suggestions-agent</code></td><td>Generates follow-up question chips</td><td>Explicitly instructed to <em>"use only the latest farmer question and assistant answer"</em> — one turn, by design</td></tr>
+        <tr><td><code>voice</code></td><td>Voice-channel calls, via Azure GPT-4.1 through a RAYA-tagged provider</td><td>Carries its own <code>history_message_count</code> tag (seen as high as 82) — session persistence works differently here</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="sub-title">An identity paradox</h3>
+  <p>Langfuse's own <code>userId</code> field is <code>"anonymous"</code> or <code>null</code> on every trace sampled — but the actual text sent to the model tells a different story. Every <code>vistaar-agent</code> prompt embeds a line pulled from the auth token itself:</p>
+  <pre><code>**Logged-in farmer ID (from token):** 65844210062
+**Logged-in farmer (Agristack-linked):** ✅</code></pre>
+  <p>A stable, government-registry-linked identity is already flowing through every authenticated request — it just isn't the identity Langfuse is keyed on, and, per Section&nbsp;5, isn't fully what the app's own session/memory keying uses either.</p>
+
+  <div class="callout finding">
+    <span class="callout-label">Finding — new sessions are the norm, which raises the stakes on user-level memory</span>
+    <p>One farmer asked six obviously sequential questions about the same groundnut crop — land preparation → pod filling → pest/disease control → pod borer control → fertilizer at pod-filling → fertilizer after planting — across <strong>six different <code>sessionId</code>s in 19 minutes</strong> (16:34:41 through 16:53:36). Each one's moderation-observation input showed <em>zero</em> prior turns: every one of the six was logged as a brand-new, historyless conversation.</p>
+    <p><strong>This is by design, not a bug</strong> — session ids are deliberately not mapped to user ids, and a farmer is free to start a new conversation as a new session at any time. That's precisely why continuity can't be the session layer's job at all: it has to live entirely at the farmer-identity level, in the profile/episodic memory described in Section&nbsp;5. The backend already accounts for this in principle — <code>preload_farmer_profile()</code> is designed to fire on the first turn of <em>every</em> new session, whenever a resolvable farmer identity exists, precisely so a fresh session id doesn't mean a fresh farmer. What's notable in this sample is that none of the six fresh-session first turns showed any injected profile content — worth confirming directly whether that's simply because this farmer had no saved profile facts yet, or whether preload isn't reliably firing/rendering into the prompt. Either way, the finding reframes the priority: not "stop sessions from resetting," but "prove user-level memory is actually doing the job it's designed to do across every reset."</p>
+  </div>
+</section>
+
+<section class="review-section" id="usecases">
+  <div class="section-num">04</div>
+  <h2 class="section-title">Use cases worth adding</h2>
+  <p>Several of these independently match priorities the team had already voted on in its own planning session — noted inline where that overlap is direct.</p>
+  <ol class="usecase-list">
+    <li><strong>Prove user-level memory is actually bridging every session reset.</strong><span class="why">Sessions are deliberately not mapped to users, so a farmer starting fresh is normal, not a bug — which means profile preload and episodic recall are the <em>only</em> thing that can carry continuity across visits. Confirm that's firing and populating reliably, not just present in code.</span></li>
+    <li><strong>Make "tell us once" the actual design target.</strong><span class="why">The team's own framing: memory should read like a ledger of what a farmer depends on, so the technology's purpose is served with minimal incremental input from them — every repeated question is a design failure, not a neutral cost. One of the most highly prioritized outcomes in the team's own planning session.</span></li>
+    <li><strong>An always-on "core memory" block per farmer.</strong><span class="why">Crop, land size, district, irrigation, language — auto-populated at first contact and injected on every turn (Letta's core-memory pattern), so a returning farmer never repeats identifying context.</span></li>
+    <li><strong>Make past advice genuinely referenceable.</strong><span class="why">Write an explicit episodic record ("advice given: X, on date Y, for topic Z") at the moment the agent gives a recommendation, rather than leaving all capture to the model's own discretion.</span></li>
+    <li><strong>Seasonal/temporal fact versioning.</strong><span class="why">Give crop and land-use facts a valid-from/valid-to instead of a flat overwrite, so "switched to soybean this kharif" doesn't erase last season's cotton data — Zep's bi-temporal lesson, directly applicable.</span></li>
+    <li><strong>Household-aware memory.</strong><span class="why">Resolve "whose fact is this" when one phone number serves a farming family with different roles, rather than assuming one identity per number.</span></li>
+    <li><strong>Extend identity + memory to the voice channel.</strong><span class="why">No equivalent "logged-in farmer" marker was found on voice traces — a farmer who called in gets none of what the text channel already learned about them.</span></li>
+    <li><strong>Forced periodic consolidation, not purely tool-call-gated capture.</strong><span class="why">Mirrors ChatGPT's "Dreaming" pattern — a background pass that writes and reconciles memory, instead of relying entirely on the model choosing to call a save tool that turn.</span></li>
+    <li><strong>A farmer-facing "what mahaVistaar knows about me" view.</strong><span class="why">View, correct, and delete stored facts — matches the ChatGPT precedent, and matters more here given this is government-linked, Agristack-tied personal data.</span></li>
+    <li><strong>Let the suggestions agent see more than the last exchange.</strong><span class="why">It's currently deliberately blind to anything before the current turn, so it can't propose "want to check pest control for the groundnut you asked about earlier?" even when that's the obviously better suggestion.</span></li>
+    <li><strong>Feed aggregated community memory back into regional decisions, not just individual advice.</strong><span class="why">Also from the team's own planning session, and distinct from personal memory entirely: patterns across many farmers in a region — recurring problems, unmet needs — aggregated and anonymized, informing actual notifications or policy attention for that area, not just one farmer's answer.</span></li>
+    <li><strong>Decide a real policy for guest/unauthenticated users.</strong><span class="why">"Logged-in" is already a stated boundary condition for memory, not an oversight — so this isn't about whether to gate it, but what happens instead for the roughly half of sampled traffic with no resolvable identity today. Even ephemeral, session-scoped-only memory would beat the current silent no-op.</span></li>
+  </ol>
+</section>
+
+<section class="review-section" id="current">
+  <div class="section-num">05</div>
+  <h2 class="section-title">The current mh-oan-api implementation, and what to build</h2>
+
+  <p>mh-oan-api turns out to already have a genuinely more advanced memory system than its sibling repo bharat-oan-api — this is worth stating plainly before the gap list below, since it's easy to undersell what's already built.</p>
+
+  <h3 class="sub-title">Short-term (session) memory</h3>
+  <p>Redis-backed, keyed by <code>{session_id}_SVA</code>, 2-hour TTL, deserialized via pydantic-ai's <code>ModelMessagesTypeAdapter</code> (<code>app/utils.py</code>). Truncation is <code>trim_history()</code> — turns are batched and greedily kept under an 80,000-token budget (64,000 in bharat-oan-api's equivalent); once the budget is exceeded, the oldest turns are dropped wholesale, with no summarization fallback. A client disconnect mid-stream drops that turn's write entirely. <code>session_id</code> defaults to a fresh UUID whenever the caller doesn't supply one (<code>app/routers/chat.py</code>) — expected, since session ids are intentionally not mapped to user ids (see Section&nbsp;3).</p>
+
+  <h3 class="sub-title">Long-term memory — two parallel stores, both real and wired in</h3>
+  <ul>
+    <li><strong>Episodic</strong> (<code>app/services/memory.py</code>) — wraps <code>mem0.Memory</code> over a Qdrant collection, with <code>add_fact()</code>/<code>search()</code>/<code>update_memory()</code>/<code>delete_memory()</code>, all scoped by a resolved <code>user_id</code>. This one <strong>does</strong> real semantic search — mem0 is configured with a genuine embedder (<code>text-embedding-3-small</code>, 1536-dim), and <code>search()</code> runs an embedded-query vector similarity lookup against Qdrant, threshold-gated at 0.3.</li>
+    <li><strong>Structured profile</strong> (<code>app/services/profile.py</code>) — a <code>FarmerProfile</code> model (village, district, crops, land area, irrigation, soil type, language, open advisory threads, notes), one Qdrant point per farmer. This one does <strong>not</strong> do semantic search — its own docstring says so directly: <em>"one point per hashed user_id; 1-d placeholder vector."</em> Qdrant here is a plain keyed document store, looked up by exact farmer id only.</li>
+    <li>Both are exposed as pydantic-ai tools the model calls at its own discretion — the module's own docstring notes there is no post-session consolidation job.</li>
+    <li><strong>Identity</strong> (<code>app/services/identity.py</code>) resolves a stable memory key from the JWT phone claim (SHA-256 hashed) with a fallback chain; explicit guest detection returns <code>None</code> and disables memory entirely for unauthenticated users.</li>
+    <li><strong>Preload</strong> happens only on a session's first turn when no history exists yet, and only pulls the structured profile — episodic memories are recall-tool-only, never preloaded.</li>
+    <li>If Qdrant or mem0 is unreachable, both services fail silently with a retry backoff — memory degrades to nothing with no visible error to the user or caller.</li>
+  </ul>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>mh-oan-api (mahaVistaar)</th><th>bharat-oan-api</th></tr></thead>
+      <tbody>
+        <tr><td>Session history</td><td>Redis, <code>_SVA</code> key, 80k-token trim</td><td>Identical pattern, 64k-token trim</td></tr>
+        <tr><td>Long-term episodic memory</td><td>mem0 + Qdrant</td><td>None</td></tr>
+        <tr><td>Structured farmer profile</td><td>Qdrant (as document store)</td><td>None</td></tr>
+        <tr><td>Stable cross-session identity</td><td>Phone-hash resolution with guest fallback</td><td>Free-form <code>user_id</code>, defaults to <code>"anonymous"</code>, trace-attribution only</td></tr>
+        <tr><td>Qdrant's other use</td><td>Memory/profile storage</td><td>Query-time content retrieval only (schemes, videos)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="sub-title">Recommended build order</h3>
+  <ul class="priority-list">
+    <li><span class="priority-badge p1">Fix first</span><div><strong>Instrument and verify profile preload actually fires and populates on every new session</strong><span class="detail">Since sessions are meant to reset freely, this is the single mechanism carrying continuity across visits — confirm it's working, not just present in code (none of six sampled fresh-session first turns for one repeat farmer showed injected profile content).</span></div></li>
+    <li><span class="priority-badge p1">Fix first</span><div><strong>Add forced end-of-session consolidation, and make it curatorial</strong><span class="detail">Don't leave memory-writing entirely to whether the model happened to call a tool that turn — and per the team's own "intentional memory" principle, this should decide what's worth keeping, not just capture more often. mem0's current <code>infer=True</code> extraction is additive-only, which is a different thing from curation.</span></div></li>
+    <li><span class="priority-badge p2">Build next</span><div><strong>Replace the profile store's placeholder-vector Qdrant collection</strong><span class="detail">It isn't using Qdrant's actual capability — a plain document store (Postgres/Redis JSON) removes a dependency for no loss of function.</span></div></li>
+    <li><span class="priority-badge p2">Build next</span><div><strong>Add valid-from/valid-to to seasonal profile fields</strong><span class="detail">Crop and land-use facts need versioning so a season change doesn't silently overwrite last season's data.</span></div></li>
+    <li><span class="priority-badge p2">Build next</span><div><strong>Define an explicit retention policy — what's kept, what ages out</strong><span class="detail">The team's own proposed model, borrowed from recommendation-system design: MFU/MRU-style signals (frequently- or recently-referenced facts stay prominent) paired with LRU-style decay for what quietly fades. Keep this distinct from three separate operations: no longer surfacing a fact, actively deleting it, and a farmer explicitly invalidating/correcting one — right now the system only really has "delete."</span></div></li>
+    <li><span class="priority-badge p2">Build next</span><div><strong>Extend identity resolution to the voice channel</strong><span class="detail">Same phone-hash approach, wired into the RAYA/voice path.</span></div></li>
+    <li><span class="priority-badge p3">Decide</span><div><strong>Guest-user memory policy</strong><span class="detail">Logged-in is already a stated boundary condition, not an open question — what's undecided is whether unauthenticated traffic gets nothing at all, or at least ephemeral, session-scoped-only memory instead of the current full opt-out.</span></div></li>
+    <li><span class="priority-badge p3">Decide</span><div><strong>Farmer-facing memory visibility</strong><span class="detail">A view/edit/delete surface for stored facts, given the Agristack-linked personal data involved.</span></div></li>
+    <li><span class="priority-badge p3">Decide</span><div><strong>Feed profile/episodic context into the suggestions agent</strong><span class="detail">Currently limited to the immediately preceding turn by design.</span></div></li>
+    <li><span class="priority-badge p3">Decide</span><div><strong>Backport (or explicitly decide not to) to bharat-oan-api</strong><span class="detail">The two repos currently diverge significantly on this entire axis.</span></div></li>
+  </ul>
+</section>
+
+<section class="review-section" id="vision">
+  <div class="section-num">06 — speculative</div>
+  <h2 class="section-title">What becomes possible, once memory actually works</h2>
+  <p class="vision-intro">None of this exists today. It's what mahaVistaar could become if every piece in Sections&nbsp;1–5 — identity-keyed memory, temporal versioning, proactive reach-out, cross-channel continuity — actually worked together. The scenarios below are built from the real crops, questions, and schemes seen in mahaVistaar's own logs.</p>
+
+  <div class="vision-grid">
+
+    <div class="vision-card">
+      <h3>The season remembers you</h3>
+      <div class="vision-tags"><span class="vision-tag">Episodic recall</span><span class="vision-tag">Temporal reasoning</span><span class="vision-tag">Proactive push</span></div>
+      <p class="scenario">A farmer asks how to prepare land for groundnut in mid-August. mahaVistaar doesn't just answer and forget — it quietly notes the crop and an implied sowing window. Six weeks later, without being asked, a message arrives: <em>"Your groundnut should be entering the pod-filling stage now. Here's the fertilizer schedule for this stage — and a reminder about pod borer, since it's common at this point."</em> The advisory follows the crop's actual biological clock, not the farmer's memory of when to ask again.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> mahaVistaar only ever answers a question already asked — there's no crop-stage calendar tied to a stored sowing date, and no channel for the system to speak first.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>Did it work?</h3>
+      <div class="vision-tags"><span class="vision-tag">Outcome tracking</span><span class="vision-tag">Closed-loop advice</span></div>
+      <p class="scenario">A farmer is told to apply a specific pest-control measure for pod borer in groundnut. Two weeks later mahaVistaar checks back: <em>"Last time you asked about pod borer — did the treatment help?"</em> A one-line reply ("yes" / "no, still bad" / "couldn't get the spray") closes the loop that's currently just an open, forgotten question. The profile schema already has a field built for exactly this — <code>open_threads</code> — sitting unused for this purpose today.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> advice is given once and never revisited; nothing writes a follow-up, and nothing reads the outcome back into the farmer's record even if they volunteered it unprompted.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>Planning the season together</h3>
+      <div class="vision-tags"><span class="vision-tag">Goal-based coaching</span><span class="vision-tag">Crop-calendar planning</span></div>
+      <p class="scenario">At the start of kharif, mahaVistaar and a farmer set an explicit goal together — not just "grow groundnut" but a target, like a yield per acre — and build a calendar of milestones from it: land prep by a date, the sowing window, the expected pod-filling stage, an eventual harvest window. Every question that season gets read against this shared plan instead of standing alone, and mahaVistaar checks in at each milestone rather than only when asked — less a Q&amp;A tool, more a season-long planning partner holding the same plan the farmer is.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> nothing in the current schema represents a stated goal or a calendar of milestones tied to it — <code>open_threads</code> tracks individual advisory topics, not a standing season plan.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>One farm, one long conversation</h3>
+      <div class="vision-tags"><span class="vision-tag">Multi-year memory</span><span class="vision-tag">Seasonal versioning</span></div>
+      <p class="scenario">Three years in: mahaVistaar holds a running record of what was grown each season on this specific plot, what advice was given, what the farmer reported back. A new question — "should I switch this field to soybean?" — gets answered with the field's own history in view: cotton the last two kharifs, a pest problem last year, tur before that. For a smallholder without formal land records, this becomes the closest thing to an agronomic diary of their own farm.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> mem0's fact extraction is additive with exact-hash dedup only — it has no concept of a season boundary, so there's no structured "this was true last kharif, this is true now" to look back through.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>Whoever picks up the phone</h3>
+      <div class="vision-tags"><span class="vision-tag">Household modeling</span><span class="vision-tag">Identity resolution</span></div>
+      <p class="scenario">The same phone number serves a whole household — a son checking mandi prices for tur, his father asking about fertilizer for the same tur-Godavari plot. mahaVistaar resolves this as one shared farm context with two people drawing on it: the son's price query and the father's fertilizer question both reference the same two-acre plot without either of them having to re-explain it, while personal asides (whose question it was) stay separate.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> memory is keyed on one phone-hashed identity with no concept of multiple people sharing it, and no mechanism to tell whose statement is whose.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>The rains are still three days out</h3>
+      <div class="vision-tags"><span class="vision-tag">External data fusion</span><span class="vision-tag">Proactive push</span></div>
+      <p class="scenario">mahaVistaar already answers "what's the forecast for Nagpur" on request. With memory, it flips the direction: it knows this farmer's cotton is at flowering stage from an earlier conversation, sees heavy rain forecast for the district three days out, and reaches out first — <em>"Rain expected Thursday–Friday. If you were planning a pesticide spray on the cotton, consider moving it earlier."</em> The advisory arrives while it can still change a decision, not only when asked.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> weather lookups and crop-stage memory exist as separate, request-only tools — nothing joins them, and nothing initiates contact.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>The scheme window is closing</h3>
+      <div class="vision-tags"><span class="vision-tag">Episodic recall</span><span class="vision-tag">Proactive push</span></div>
+      <p class="scenario">A farmer asked about the Bhausaheb Fundkar orchard-planting subsidy back in June and seemed eligible but never followed up. In early July, five days before the application window closes, mahaVistaar sends a reminder: <em>"The orchard subsidy you asked about closes on the 12th — want help applying before it shuts?"</em> And since it already knows the farmer's land size, district, and crop from the stored profile, it doesn't stop at reminding — it prepares a pre-filled application for them to check and submit, turning a form many smallholders abandon halfway through into a two-tap confirmation. Missing a scheme deadline because no one reminded you, or giving up partway through a form, are two of the most common, most preventable ways smallholders lose out on real money.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> scheme conversations aren't tracked as open items with real dates attached, there's no scheduled job watching for approaching deadlines, and nothing turns stored profile facts into a pre-filled form.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>Called Monday, texted Thursday, still the same conversation</h3>
+      <div class="vision-tags"><span class="vision-tag">Cross-channel identity</span></div>
+      <p class="scenario">A farmer calls the voice line about a cabbage pest problem on Monday. On Thursday, the same farmer texts on WhatsApp asking about fertilizer timing for the same crop. mahaVistaar already knows about Monday's call — one relationship, reached two different ways, not two strangers who happen to share a phone number.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> voice traces show no equivalent farmer-identity marker to the text channel's — the two appear to be memory-isolated from each other right now.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>Something's moving through the district</h3>
+      <div class="vision-tags"><span class="vision-tag">Community-level memory</span><span class="vision-tag">Anomaly detection</span></div>
+      <p class="scenario">mahaVistaar notices an unusual spike: many farmers in the same taluka, within the same week, independently asking about a leaf-spot-like symptom on groundnut. Before most of them have even noticed a problem themselves, a district-wide advisory goes out to every groundnut farmer nearby — memory operating not just per-farmer, but as an early-warning system built from the aggregate pattern of what people are suddenly asking.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> every query is handled in isolation; nothing aggregates across farmers to notice a pattern forming in near-real time.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>What the district is telling the state</h3>
+      <div class="vision-tags"><span class="vision-tag">Community-level memory</span><span class="vision-tag">Policy feedback loop</span></div>
+      <p class="scenario">The card above is farmer-facing — an early warning back out to the people asking. This one points the other way. Across a taluka, dozens of farmers have separately mentioned irrigation shortages over a season, never as a formal complaint, just as context inside ordinary questions. Aggregated and anonymized, that becomes a signal the state agriculture department can actually act on: not a chatbot transcript, but a concrete case for where a borewell scheme would matter most this year. Memory here isn't serving one farmer — it's feeding the same policy process that decides what schemes exist to ask about in the first place.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> no aggregation layer exists above the per-farmer memory stores, and no path connects mahaVistaar's logs to any policy or resource-allocation process.</p>
+    </div>
+
+    <div class="vision-card">
+      <h3>"What do you know about me?"</h3>
+      <div class="vision-tags"><span class="vision-tag">Transparency</span><span class="vision-tag">Farmer agency</span></div>
+      <p class="scenario">A farmer asks, in Marathi, "what do you know about my farm?" — and gets a clear, plain-language summary back: crop, land size, district, the last few things discussed, nothing hidden or opaque. They can correct it on the spot ("no, I switched to soybean") the same way they'd correct a person. Given this is Agristack-linked personal data, this isn't a nice-to-have — it's the difference between a system farmers trust and one they're right to be wary of.</p>
+      <p class="not-yet"><strong>Not possible today:</strong> the only existing read paths are internal admin/debug routes gated by an admin token — there's no farmer-facing view at all.</p>
+    </div>
+
+  </div>
+
+  <div class="callout vision-caveat">
+    <span class="callout-label">Worth naming honestly</span>
+    <p>Several of these — especially anything touching financial stress, debt, or risk tolerance — cross from "helpful memory" into sensitive personal data territory fast. A system that remembers enough to give genuinely personalized advice is also a system that could quietly profile vulnerability. The community→policy card carries its own version of the same risk one level up: an aggregate signal is only as fair as who's represented in it, and a policy decision built on mahaVistaar's user base could just as easily entrench whoever already has access to a smartphone as serve whoever needs the scheme most. Every one of these should ship with the same farmer-facing transparency as the "what do you know about me" card, not just the proactive-outreach features — remembering more, individually or collectively, only earns trust if what's remembered stays visible and correctable.</p>
+  </div>
+</section>
+
+<footer class="doc-footer">
+  Compiled from mahaVistaar's production Langfuse instance (public API, sampled directly), a direct read of the mh-oan-api and bharat-oan-api source, and external research into CoALA, ChatGPT Memory, Mem0, Letta/MemGPT, Zep/Graphiti, Amazon Alexa+, and LangGraph's long-term memory store.
+</footer>
+
+</div>

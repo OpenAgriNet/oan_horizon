@@ -102,6 +102,11 @@
 │    - Market: mandi_prices                                          │
 │    - Services: agri_services, contact_agricultural_staff           │
 │    - Identity/profile: fetch_agristack_data                        │
+│    - Long-term memory (mem0 + profile; hidden entirely from guests │
+│      via _require_farmer_identity — not just refused, not offered  │
+│      to the model at all): recall_farmer_memory, save_farmer_memory,│
+│      edit_farmer_memory, delete_farmer_memory, update_farmer_profile,│
+│      remove_farmer_profile_value                                   │
 │    - Schemes: get_scheme_codes, get_scheme_info                    │
 │    - MahaDBT: get_scheme_status                                    │
 │    - Pest detection: analyze_pest_disease_image                    │
@@ -198,6 +203,61 @@
     - moderation_agent.run(...) executes before agrinet_agent.run_stream(...)
     - moderation result is injected into FarmerContext for main-agent reasoning
     - suggestion generation is triggered only when category == valid_agricultural
+============================================================================
+                        LONG-TERM MEMORY
+============================================================================
+  mh-oan-api is the only OAN backend with real cross-session memory today
+  (bharat-oan-api has none of this — Marqo/Qdrant there is query-time content
+  search only, never a per-user store).
+
+  Two parallel stores, both real and wired into the agent as tools:
+    - Episodic (app/services/memory.py, MemoryService):
+        wraps mem0.Memory over Qdrant collection
+        vistaar_chat_farmer_memories
+        Embedder: text-embedding-3-small (1536-dim, OpenAI-compatible)
+          -> genuine semantic search, not a placeholder
+        search(): client.search(query, filters={"user_id": ...}, top_k=5,
+                                 threshold=0.3)
+        add_fact(): mem0 infer=True extraction, additive with exact-hash
+          dedup (does NOT supersede a contradicting fact, e.g. a crop change)
+    - Structured profile (app/services/profile.py, FarmerProfile model):
+        village, district, state, preferred_mandi, crops, land_area_acres,
+        irrigation, soil_type, livestock, language, preferred_call_time,
+        schemes, open_threads (topic/advice_given/status), notes
+        One Qdrant point per farmer, collection vistaar_farmer_profiles
+        _PLACEHOLDER_VECTOR = [0.0] -> NOT semantic search, a plain keyed
+          document store (own docstring: "1-d placeholder vector")
+
+  Identity (app/services/identity.py, resolve_memory_user_id()):
+    - Priority 1: JWT phone claim, SHA-256 hashed (normalized +91XXXXXXXXXX)
+    - Falls back through other stable JWT ids
+    - Explicit guest detection (_is_guest_value) returns None
+      -> memory tools aren't merely refused, they're never even shown to
+         the model for a guest session (see Tooling surface, and
+         _require_farmer_identity in agents/tools/__init__.py)
+
+  Preload (app/services/memory_context.py, preload_farmer_profile()):
+    - Fires only on a session's first turn (`memory_user_id and not history`)
+    - Pulls the structured profile only — episodic memories are recall-tool
+      -only, never preloaded
+    - Since session_id is NOT mapped to user identity (a farmer can start a
+      fresh session at any time), this preload is the only mechanism that
+      can carry continuity across visits — session continuity itself is not
+      the design's job
+
+  Known gaps (not yet built, no committed timeline):
+    - Capture is entirely tool-call-gated — memory.py's own docstring notes
+      "no post-session job"; nothing forces consolidation at end of session
+    - mem0's additive-only extraction has no season/time boundary — a crop
+      change doesn't supersede the old fact, it just adds alongside it
+    - If Qdrant/mem0 is unreachable, both services fail silently with a 60s
+      retry backoff — memory degrades to nothing with no visible error
+    - No farmer-facing view of stored memory; only internal admin/debug
+      routes (app/routers/memories.py, app/routers/profile.py), gated by
+      INTERNAL_ADMIN_TOKEN
+  Full review, live production-log findings, and speculative future use
+  cases: see oan_horizon/future_work/memory/README.md and the linked
+  artifact there.
 ============================================================================
                       TOOL CALL INPUT OUTPUT
 ============================================================================
@@ -298,21 +358,67 @@
       "> Farmer Information (Agristack) ..."
       (masked farmer profile/location/farm details)
 
-  11) get_scheme_status (MahaDBT)
+  11) recall_farmer_memory
+    - Input:
+      recall_farmer_memory(query="cotton pest advice")
+    - Output:
+      mem0 semantic search results (threshold 0.3, top_k 5) as formatted
+      text; falls back to the 3 most recent saved memories on no match;
+      "No farmer memory available for this session." if not logged in.
+      (Not offered to guests at all — see Tooling surface.)
+
+  12) save_farmer_memory
+    - Input:
+      save_farmer_memory(memory="Farmer's cotton field near Yavatmal had
+        pest issues last kharif")
+    - Output:
+      mem0 infer=True extraction result — "Saved to farmer memory." or
+      "Already saved — nothing new to store." on exact-hash duplicate.
+      Additive only: does not supersede a contradicting earlier fact.
+
+  13) edit_farmer_memory
+    - Input:
+      edit_farmer_memory(memory_id="<id from recall_farmer_memory>",
+        new_memory="Farmer switched from cotton to soybean this kharif")
+    - Output:
+      "Updated farmer memory." after verifying the memory belongs to this
+      farmer; "Memory not found for this farmer." otherwise.
+
+  14) delete_farmer_memory
+    - Input:
+      delete_farmer_memory(memory_id="<id from recall_farmer_memory>")
+    - Output:
+      "Deleted farmer memory." after ownership check, else not-found text.
+
+  15) update_farmer_profile
+    - Input:
+      update_farmer_profile(field="crop", value="cotton")
+    - Output:
+      "Saved profile {field}: {value}." — writes into the structured
+      FarmerProfile (Qdrant-as-document-store, no semantic search).
+
+  16) remove_farmer_profile_value
+    - Input:
+      remove_farmer_profile_value(field="crop", value="cotton")
+    - Output:
+      "Removed profile {field}: {value}." for an explicit retraction
+      ("I no longer grow cotton"), or "No matching profile value found."
+
+  17) get_scheme_status (MahaDBT)
     - Input:
       get_scheme_status(ctx)  [uses ctx.deps.farmer_id]
     - Output:
       "## MahaDBT Scheme Status Information ..."
       (application status summary + masked IDs)
 
-  12) get_scheme_codes / get_scheme_info
+  18) get_scheme_codes / get_scheme_info
     - Input:
       get_scheme_codes()
       get_scheme_info(scheme_code="XYZ123")
     - Output:
       scheme code/details text blocks used by agent response synthesis
 
-  13) analyze_pest_disease_image
+  19) analyze_pest_disease_image
     - Input:
       analyze_pest_disease_image(upload_id="pest_5a466793-...")
     - Output:
