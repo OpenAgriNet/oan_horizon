@@ -1,48 +1,50 @@
-# Amul memory (exploratory — no decisions made yet)
+# Amul memory
 
-Design discussion for adding conversational/episodic memory to Amul (PashuGPT
-dairy-farmer assistant: `voice-oan-api` + `amul-oan-api`). Amul has no long-term memory
-today — see "Current state" in `memory-design-decisions.md`.
+Design work for adding conversation memory to Amul (PashuGPT dairy-farmer assistant:
+`voice-oan-api` + `amul-oan-api`). Amul has no memory of past conversations today —
+see `memory-design-decisions.md`'s "Current state" for what's verified in the code.
 
 This mirrors the earlier mahaVistaar memory work (`mh-oan-api`; see
 `oan-brain/knowledge/mh-oan-api-memory.md` and this repo's `future_work/memory/`) but
-starts from a different base: Amul is voice-first (RAYA IVR) with tighter latency
-constraints, and this round also considers
-[Honcho](https://github.com/plastic-labs/honcho) as an off-the-shelf memory
-infrastructure option, not just a custom mem0-style build from scratch.
+starts from a different base: Amul is voice-first (RAYA IVR) with tighter speed
+requirements, and this round also weighed two off-the-shelf options —
+[Honcho](https://github.com/plastic-labs/honcho) and
+[Graphiti](https://github.com/getzep/graphiti) — against building it ourselves.
 
-**Grounding note**: `Amul_understanding.md` (this repo, root) is a useful high-level
-architecture map but is stale in places (predates the `doctor` persona, Beckn/loan/SHC
-tools, and the current `FarmerContext`/history-TTL shape). Where the two disagree,
+**Grounding note**: `Amul_understanding.md` (this repo, root) is a useful
+high-level map but is stale in places (predates the `doctor` mode, some newer tools,
+and the current session-history timing). Where they disagree,
 `memory-design-decisions.md` defers to a direct read of
-`github.com/OpenAgriNet/amul-oan-api` (`main`, checked 2026-09-04) — see that file for
+`github.com/OpenAgriNet/amul-oan-api` (checked 2026-09-04) — see that file for
 specifics.
 
-## What this covers
+## What's here
 
-- **`memory-overview.md` — start here.** A single, plain-language doc pulling
-  everything below together: guiding principles, real examples from actual farmer
-  conversations, made-up examples to broaden thinking, and the Honcho-vs-build-it-
-  ourselves comparison — written for review/markup, not just reading. The files below
-  are the detailed backing material this one draws from.
-- `memory-design-decisions.md` — current state (no memory exists yet), what's
-  different about Amul vs. mahaVistaar, design options (custom mem0-style vs. Honcho,
-  or a hybrid), the voice-specific recall-strategy tradeoff, and a starting
-  recommendation (not a decision).
-- `backtesting-plan.md` — how to validate any chosen design against Amul's real
-  historical Langfuse logs before shipping: replay past farmer sessions as if memory
-  had existed, compare against the real production answers, and gate on no regression
-  + no "annoying"/unsolicited memory use.
-- `log-findings.md` — real cases mined from 8 heavy-repeat farmers' actual 30-day prod
-  conversations, showing concretely where the *current*, memory-less bot fails these
-  users today. Grounds the design in real behavior rather than hypotheticals; read this
-  before the two docs above if you want the "why" first. Also has a second section of
-  invented (not log-mined) scenarios — doctor persona, loans, seasonal reasoning,
-  multi-caller households, cross-farmer patterns, and what memory should deliberately
-  *not* keep — generated to push past what a 30-day/8-farmer sample can show on its own.
+- **`memory-overview.md` — start here.** A single, plain-language document with
+  everything: guiding principles, real examples from actual farmer conversations
+  sorted by priority, the feature ideas that came out of reviewing them, made-up
+  examples to broaden the thinking, and the technology comparison. Written to be
+  marked up, not just read.
+- `memory-design-decisions.md` — the technical companion: exactly what exists in the
+  code today, what makes Amul different from mahaVistaar, and the decided direction
+  (build it ourselves on the vector database already running, not Honcho or
+  Graphiti — see that file for why).
+- `backtesting-plan.md` — how to test any built version against Amul's real past
+  conversations before turning it on for real: replay old conversations as if memory
+  had existed, compare against what actually happened, and check for both real
+  improvement and any sign of feeling intrusive or annoying.
+- `log-findings.md` — the real cases this is all based on, found by reading 8
+  heavy-repeat farmers' actual month of conversations, plus a second section of
+  made-up scenarios (vet mode, loans, the farming calendar, shared phones, patterns
+  across farmers, and what memory should deliberately never keep) written to explore
+  past what one month of real logs could show.
 
 ## Status
 
-Discussion only — nothing decided or built yet. Revisit once there's alignment on
-which design direction (and Honcho-vs-custom specifically) to build, and see
-`memory-design-decisions.md`'s open questions before finalizing anything.
+**Decided**: build it ourselves, on top of the vector database (Qdrant) already
+running for this work — not Honcho, not Graphiti. Reasoning in
+`memory-design-decisions.md`.
+
+**Not yet decided**: which specific examples in `memory-overview.md` to actually
+build first (priorities are marked, not all agreed), and the open questions listed at
+the end of `memory-design-decisions.md` and `memory-overview.md`.

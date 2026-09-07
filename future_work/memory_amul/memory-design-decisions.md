@@ -1,265 +1,163 @@
-# Amul Memory Design
+# Amul Memory — Technical Design
 
-**See `log-findings.md` first** — real cases mined from 8 heavy-repeat farmers' actual
-prod conversations, grounding everything below in observed behavior rather than
-hypotheticals. In particular, its Case 8 (a farmer left believing a vet visit was
-already booked when it never was, across a 12-day worsening animal-health case) argues
-that booking/action-state continuity is not an optional nice-to-have here — it's the
-single highest-priority scenario found.
+This is the technical companion to `memory-overview.md` (start there for the
+plain-language version, the priority-sorted examples, and the feature list). This file
+has the code-level detail: exactly what exists today, why Amul is different from
+mahaVistaar's memory system, and the final decision on what to build it with.
 
-## Current state (verified directly against `amul-oan-api@main`, checked 2026-09-04 —
-## supersedes `Amul_understanding.md` where they disagree)
+See `log-findings.md` for the real cases this is based on. Its Case 8 — a farmer left
+believing a vet visit was already booked when it never was, across a 12-day worsening
+animal-health case — is why "does the bot's wording match what actually happened" is
+treated as the single most important thing to get right below.
 
-Amul (`voice-oan-api` + `amul-oan-api`) has **no conversational memory today** — same
-gap as `bharat-oan-api`, not `mh-oan-api`. Everything that looks like "memory" is
-actually live external profile data, refetched and cached, not facts the bot has
-derived from what a farmer has said in past conversations:
+## Current state (checked directly against the `amul-oan-api` code, 2026-09-04)
 
-- **Conversation history**: Redis, keyed by `session_id`, TTL is
-  `HISTORY_CACHE_TTL_SECONDS` (default **2 hours**, refreshed on every turn) —
-  `app/config.py:166-173`. This is shorter-lived than `Amul_understanding.md`'s 24h
-  figure; treat 24h as stale. `session_id` is client-supplied, per-call/per-thread —
-  nothing here maps it to farmer identity across sessions.
-- **Farmer/animal profile** (`agents/services/farmer_cache.py`, `agents/farmer_context.py`):
-  a stale-while-revalidate cache over Beckn/PashuGPT/CVCC/Banas APIs — farmer record,
-  animal data, vet visit history, AI-technician info — keyed by a SHA-256 hash of
-  phone number. Soft refresh 12h (found) / 2h (not-found), hard retention nominally 7d
-  per the module's own docstring but `farmer_animal_api_cache_ttl` in `app/config.py`
-  is set to **17 days** — this discrepancy is unresolved in the code itself, worth a
-  quick check before relying on either number. Either way: this is re-fetched source
-  data, not conversation-derived memory — no timestamps-per-fact, no "what we told this
-  farmer last time," no state tracking of *changes* the farmer has reported.
-- **Soil Health Card context**: `soil_health_card_context` on `FarmerContext` — "bounded
-  agronomic facts from this signed-in session's latest Soil Health Card." Explicitly
-  session-scoped, not persisted across turns/sessions. Notable as a **precedent already
-  in this codebase** for "small, curated, bounded context object injected into the
-  prompt" — the shape any new memory injection should probably follow, not a new
-  pattern to invent.
-- **Identity**: normalized mobile number (`agents/tools/farmer_animal_backends.py::normalize_phone`),
-  same mechanism mh-oan-api's `resolve_memory_user_id()` uses (phone-based, just not
-  SHA-256-hashed at the `FarmerContext` level — the farmer-cache layer hashes it,
-  `mobile` on `FarmerContext` itself is plain). `signed_in: bool` is already a
-  first-class field, gating which tools/context a turn gets.
-- **Two personas, not one**: `FarmerContext.persona: Literal['farmer', 'doctor']`.
-  `doctor` is the **Amul Veterinary Assistant** — a separate audience (vets, not
-  farmers) doing clinical decision support on cattle/buffalo/calves, with its own
-  system prompt (`assets/prompts/doctor_system_translation_pipeline.md`) and identity
-  response (`app/services/identity_profile.py`). **This matters for memory design**: a
-  vet's useful "memory" (case history for a specific animal across visits, prior
-  diagnoses/treatments) is a different shape from a farmer's (herd-level facts,
-  recurring concerns, advice already given) — any design here needs to say which
-  persona(s) it's for, not assume "Amul memory" means the farmer persona only.
+Amul (`voice-oan-api` + `amul-oan-api`) has **no memory of past conversations today.**
+Everything that looks like memory is actually live data pulled fresh from other Amul
+systems each time — not anything the bot has learned from talking to a farmer:
 
-So this is a **greenfield build**, not an extension — unlike `mh-oan-api`, there's no
-existing mem0/Qdrant scaffolding here to build on.
+- **Conversation history**: kept in Redis, but only for **2 hours**, and only within
+  one `session_id` — a new phone call or a new app session usually starts a fresh one
+  anyway. (`app/config.py:166-173`, `HISTORY_CACHE_TTL_SECONDS`.)
+- **Farmer/animal record**: a cache of the farmer's live account data (herd, vet
+  visits, AI-technician info), refreshed every 12 hours if found, sooner if not.
+  (`agents/services/farmer_cache.py`, `agents/farmer_context.py`.) This is re-fetched
+  source data, not anything derived from conversation — no sense of "what we told this
+  farmer last time."
+- **Soil Health Card context**: a small, bounded block of facts pulled in for one
+  session and then dropped — never carried across sessions. Worth noting as a
+  precedent already in the codebase for "a short, labeled block of context added to
+  the prompt" — the shape any memory should follow, not something new to invent.
+- **Identity**: the farmer's phone number, already normalized and used as the lookup
+  key for the record above — the same mechanism to key memory on, nothing new needed.
+- **Two separate modes**: a `farmer` mode (the default) and a `doctor` mode — a
+  separate, vet-facing clinical assistant with its own prompt and identity. Memory for
+  a vet (case history for one animal across visits) is a different shape from memory
+  for a farmer (herd-level facts, ongoing concerns) — any plan here needs to say
+  clearly which mode it's for.
 
-## What's different about Amul vs. mahaVistaar (why this isn't a copy-paste)
+So this is starting from nothing — unlike `mh-oan-api` (Amul's sister product for
+Maharashtra), which already has a working memory system to learn from, there's no
+existing scaffolding here to extend.
 
-1. **Voice-first, latency-sensitive.** The voice pipeline nudges the caller
-  ("please wait") specifically because tool calls introduce audible delay. Any memory
-  recall step that's a live LLM call (vs. a cached lookup) adds latency on a channel
-  where that's directly felt mid-sentence.
-2. **Two backends, one identity.** `voice-oan-api` and `amul-oan-api` are separate
-  services sharing a farmer (by mobile) — the farmer-cache layer already does this
-  (chat and voice share the same Redis key per phone). Memory needs the same property:
-  identity-keyed and reachable from both, not owned by one service's local state.
-3. **Two personas.** Farmer and doctor (see above) — decide scope explicitly.
-4. **Signed-in vs. not is already first-class** (`signed_in: bool`, gates
-  `farmer_info`/tool access) — the same guest/no-memory gate mh-oan-api uses can reuse
-  this existing field, not a new concept.
-5. **A curated-context precedent already exists** (`soil_health_card_context`) — bounded,
-  session-scoped, injected as a labeled block ahead of the query. Any memory injection
-  should look like this, not a raw history dump.
-6. **Domain is narrower and more factual** — herd composition, specific animals (ear
-  tags), AI-call/vet-visit history — arguably easier to schema than general
-  BharatVistaar advisory topics, closer to mh's structured "crop facts" than free-form
-  chat.
+## What makes Amul different from mahaVistaar (why we can't just copy its design)
 
-## Guiding principle: the compute budget is asymmetric, not uniformly tight
+1. **Voice-first, and speed matters.** The voice pipeline already tells callers
+   "please wait" specifically because looking things up takes noticeable time. Any
+   memory step that requires the bot to "think" before answering adds a delay a caller
+   directly feels, mid-sentence.
+2. **Two separate programs, one identity.** The phone and chat/app systems are
+   separate pieces of software but need to share the same farmer's memory — the
+   existing farmer-record cache already does this (both look up the same phone
+   number), and memory should work the same way.
+3. **Two modes** (farmer vs. doctor) — decide scope explicitly, don't assume "memory"
+   automatically means both.
+4. **Signed-in vs. not is already a built-in distinction** — the same on/off switch
+   that already controls which tools/information a caller gets can gate memory too,
+   nothing new to build for that part.
+5. **There's already a working example of "small, bounded context block"** in this
+   codebase (the Soil Health Card block mentioned above) — memory should be added the
+   same way, not as a raw dump of everything ever said.
+6. **The topics are narrower and more factual** — herd size, specific animals, vet
+   visit history — genuinely easier to capture as a handful of clear fields than
+   general open-ended advice topics would be.
 
-Stated explicitly because it changes how the rest of this doc should be read: **latency
-only matters during the live turn itself.** Outside that window, cost is not a
-constraint worth designing around.
+## Guiding principle: speed only matters live, not before or after
 
-- **Pre-session and post-session: unlimited.** As many LLM calls, as much reasoning
-  depth, as much token spend as the case needs — background consolidation
-  (Honcho-Dreamer-style deductive/inductive passes, or a hand-rolled equivalent),
-  escalation flagging, follow-up-ledger updates, whatever it takes to make the *next*
-  session smarter. None of this is felt by a farmer mid-call, so none of it should be
-  scoped down for latency reasons. Spend freely here.
-- **During the live turn: the constraint is "no added sequential wait," not "no LLM
-  calls."** A memory-related LLM call made *during* a turn is fine **if it runs in
-  parallel with the main agent generation** — exactly the pattern this codebase already
-  uses for content moderation (`FarmerContext`'s `_moderation_task`/`ensure_in_scope()`
-  in `agents/deps.py`: moderation runs concurrently with the agent, and side-effecting
-  tools await it only at the point they'd actually act). What's not fine is a *sequential*
-  hop the farmer has to wait through before the response can start.
-- **Practical consequence**: don't design the "deep reasoning" memory capability as
-  something the live agent calls and blocks on mid-turn (softening the framing in
-  "Recall strategy" below — a nudge-covered tool call is still a sequential wait from
-  the farmer's perspective, just a disguised one). Instead:
-  - Kick off any deep/expensive memory read **as soon as identity resolves** (the
-    moment a call connects or a session opens, before the farmer has even finished
-    speaking their first turn) and run it in parallel with STT/greeting/whatever
-    already happens first — by the time it's needed, it's ready.
-  - Do the actual hard consolidation reasoning **after the session ends**, updating
-    the record for *next* time — same shape as `farmer_refresh_worker.py`'s existing
-    background-refresh pattern, just refreshing derived memory instead of raw farmer
-    data.
-  - Only genuinely synchronous, in-turn context (the low-latency
-    `FarmerProfile`-equivalent read, or Honcho's `representation()` — see below) needs
-    to be cheap enough to sit directly on the hot path, because nothing else is
-    available to parallelize it against at that exact moment.
+**Latency only matters while a farmer is actually waiting for an answer.** Outside
+that exact window, cost isn't something to design around.
 
-This reframes the earlier Honcho-vs-custom cost comparison too: the "unlimited off-turn
-compute" principle applies equally to both options, so Honcho's Dreamer-style background
-reasoning isn't something to ration for cost/latency reasons — the actual tradeoff
-remains build-vs-adopt (do we want to write and tune that consolidation logic ourselves,
-or use Honcho's), not "can we afford to run it."
+- **Before a call starts, and after it ends: no limit.** As much processing, as many
+  AI calls, as much time as it takes — a farmer never feels any of this. Background
+  work (updating memory after a call, checking whether something needs following up)
+  should be done properly here, not rushed.
+- **During the live turn: the rule is "don't add a new wait," not "no AI calls at
+  all."** A memory-related AI call made *during* a turn is fine **if it happens
+  alongside** the main reply being generated — the same way the bot already checks a
+  message against moderation rules *while* it's also drafting a reply, not before. A
+  new step the farmer has to wait through before the reply even starts is what to
+  avoid.
+- **In practice, this means:** don't design memory as something the live bot "looks up
+  and waits for" mid-conversation. Instead, either (a) start any deeper memory lookup
+  the moment the caller's identity is known — in parallel with whatever already
+  happens first (like the initial greeting) — so it's ready by the time it's needed,
+  or (b) do the real thinking *after* the call ends, so the *next* call starts already
+  informed. Only the cheapest, simplest lookup (a plain fact check, no "thinking"
+  step) belongs directly in the live turn, because nothing else is available to run it
+  alongside at that exact moment.
 
-## Design options
+## Decision: build it ourselves, on the vector database already running for this work
 
-### Option A — Custom, mem0-style (port mh-oan-api's pattern)
+Three options were seriously considered — building it ourselves on a vector database
+(a database built for fast "find similar things" lookups; we already have one, called
+Qdrant, running for this work), a ready-made product called **Honcho**, and another
+called **Graphiti** (which stores memory as a small knowledge graph rather than plain
+records). Full comparison notes are in `memory-overview.md` Section 5. The short
+version of why we're not using either ready-made option:
 
-Reuse the two-layer split mh-oan-api runs in production today, refined per
-`future_work/memory/memory-design-decisions.md`'s proposed changes (post-session
-writes, fixed schema, timestamps/state-tracking for the profile; reconciled
-topic-chunk episodic memory).
+- **Honcho needs the most new infrastructure of the three** — a whole new type of
+  database (Postgres, not used anywhere in Amul's stack today) plus its own separate
+  cache system plus a permanently-running background program of its own. Its real
+  advantage (a genuinely smart way of answering "has this come up before, how many
+  times") is real, but not worth that much new infrastructure for a bot that doesn't
+  need that specific capability as its top priority.
+- **Graphiti needs a graph database** (Neo4j, or a lighter alternative called
+  FalkorDB) as a new piece of infrastructure. Its real advantage (defining simple
+  structured fields and getting them filled in automatically, plus automatically
+  marking old facts as no-longer-true when something changes) is genuinely useful —
+  but **it stores its own copy of the same kind of "find similar things" data Qdrant
+  already handles for us**, checked directly in its code — there's no way to make it
+  use Qdrant for that part while just using the graph database for structure. So
+  adopting it means running a second database that duplicates something we already
+  have running.
+- **Qdrant is already proven inside this org** — `mh-oan-api` runs it in production
+  for its own memory system today, and another product (`docs-pipeline`) uses it too.
+  It's not new to the org, just new to Amul specifically. Building on it adds **zero**
+  new infrastructure to Amul's stack.
 
-- Pro: proven in this org already (mh-dev), same team knows the failure modes
-  (additive-only drift, preload-reliability gap), and the "small curated bounded
-  context" shape already matches this repo's `soil_health_card_context` precedent.
-- Con: build + own it — reconciliation logic, chunk merging, retention policy all
-  bespoke; mh's own version doesn't have these refinements built yet either, so Amul
-  would be prototyping the *next* iteration of an unproven design, not copying a
-  finished one.
+**What we give up by not using Honcho or Graphiti, and how to get it back cheaply:**
+- *Automatic structured fields* (Graphiti's advantage) → instead, define a small,
+  fixed set of fields ourselves (e.g. "a complaint has a status and a count") and
+  store them as tagged data alongside each memory entry in Qdrant. Qdrant already
+  supports this kind of tagged/filterable data — we just have to decide the fields and
+  write the extraction step, which we'd have to do with any of these options anyway.
+- *Automatically updating stale facts* (Graphiti's other advantage) → our own
+  background job checks, each time it processes a conversation, whether an entry for
+  that topic/farmer already exists and updates it in place (e.g. status: open →
+  resolved) instead of blindly adding a new one. A small amount of logic, not a new
+  system.
+- *A genuinely smart way to notice "this has come up before, repeatedly"* (Honcho's
+  advantage) → this is the one thing worth being honest we're not getting automatically.
+  It's a real capability gap for the "unresolved complaint" style cases (see
+  `log-findings.md` Cases 2, 6, 7) — but per the priority list in `memory-overview.md`,
+  those are currently marked **low priority**, blocked on the proactive-follow-up
+  feature existing first anyway. Worth revisiting if that priority changes.
 
-### Option B — Honcho (`github.com/plastic-labs/honcho`) as the memory layer
+**What neither option solves, regardless of what we pick:** Case 8 in `log-findings.md`
+— making sure the bot's own words match what actually happened (never implying a
+booking is confirmed when it isn't) — needs its own simple tracking (a plain "was this
+actually done, yes or no" record), completely separate from whichever memory system
+we build. This has to be built deliberately either way.
 
-Self-hosted (AGPL-3.0, FastAPI + Postgres/pgvector, `docker compose up`) memory
-infrastructure, peer-centric:
+## How memory gets read during a call
 
-- **Peer** = farmer (or vet, for the doctor persona — Honcho's peer model is
-  general-purpose, not farmer-specific), keyed by the same normalized mobile already
-  resolved today. **Session** = a call or chat thread. **Messages** = turns.
-- Storage (sync, via API) is separate from Insights (async, background "deriver"
-  worker) — messages get stored immediately, reasoning/representation-building happens
-  off the critical path. Maps cleanly onto this repo's existing pattern of doing
-  bounded, pre-built context injection (`farmer_info`, `soil_health_card_context`) —
-  adding `session.add_messages(...)` alongside the existing post-turn Redis history
-  write is additive, not a pipeline rework.
-- Two retrieval shapes, which matter given the latency constraint:
-  - `peer.representation(...)` — **static, low-latency snapshot, no LLM call at read
-    time**. This is the one for voice preload (equivalent to mh's
-    `preload_farmer_profile()`), since it doesn't add a live-inference hop mid-call.
-  - `peer.chat(...)` — reasoning-informed natural-language query, but itself an LLM
-    call — closer to a recall *tool* the agent can choose to invoke (nudge covers the
-    latency, same as any other tool call in this codebase), not something to call
-    unconditionally every turn.
-- Gets timestamped, reasoning-derived "conclusions" and session summaries for free —
-  the exact thing mh's reconciliation proposal is trying to hand-build.
-- Con: new infra dependency (Postgres+pgvector, a deriver worker, its own LLM calls for
-  reasoning — real cost/ops to evaluate), AGPL-3.0 license (check before shipping in a
-  product context), and it's schema-agnostic/general-purpose — doesn't give Amul a
-  `FarmerProfile`-style fixed-field schema out of the box; would still need
-  Amul-specific prompting/schema on top (via its conclusions/chat API) to get
-  herd-specific structured facts rather than free-form conclusions.
-
-#### What Honcho actually differentiates on, vs. what we already have
-
-Worth being precise about this, since raw vector storage and raw LLM access are **not**
-the differentiator — both already exist here (Qdrant is already stood up locally for
-this work; `mh-oan-api` already runs mem0-over-Qdrant in production; `amul-oan-api`
-already has full LLM access wired in via `app/llm_core`). If Honcho only meant "a vector
-DB plus an LLM call," it would add nothing worth the new infra.
-
-What it does add:
-
-- **The reasoning/consolidation pipeline itself** — an async worker that keeps
-  extracting "conclusions" from conversation and updating a per-peer representation
-  over time. This is *exactly* what `future_work/memory/memory-design-decisions.md`
-  proposes hand-building for mahaVistaar (Option 2: topic-chunk merging, in-place
-  updates, temporal reasoning) — Honcho ships a version of this already built and
-  tuned, not something to design from scratch.
-- **A natural-language query interface over accumulated history** (`peer.chat(...)`) —
-  this is what would actually answer "has this farmer raised this deduction before, how
-  many times, still unresolved?" (`log-findings.md` Cases 2, 6, 7). Plain
-  similarity-threshold recall doesn't produce that on its own; something has to reason
-  over the retrieved history. Honcho ships that reasoning step; a custom build means
-  writing and maintaining our own version of it.
-- **Session summarization "for free"** — `knowledge/mh-oan-api-memory.md` flags "no
-  forced end-of-session consolidation" as a real, current gap in mh's own memory
-  system; Honcho's deriver does this automatically.
-
-What it does **not** solve, regardless of which option is picked: `log-findings.md`
-Case 8 (a farmer left believing a vet visit was already booked, across a 12-day
-worsening animal-health case) needs an explicit action/commitment ledger — tracking
-whether a stated booking actually happened and never letting the bot's own language
-imply otherwise. Neither Honcho nor a custom mem0-style store does this out of the box;
-it's bespoke engineering either way, on top of whichever memory layer gets chosen.
-
-### Recommendation (not decided — for discussion)
-
-Case-driven, not a blanket pick — the log-findings cases split cleanly by which option
-actually helps:
-
-- **Cases 3, 4, 9** (stable facts, disambiguation, anomaly-vs-baseline) need only a
-  **structured "FarmerProfile"-equivalent** (herd composition, last AI/vet call, which
-  linked account is usually meant) — a small, explicit schema (same shape as
-  `soil_health_card_context`), stored as a plain cached KV doc. **Must be a low-latency
-  read, never a live reasoning call, on the voice channel** — this part doesn't need
-  Honcho at all; Option A (or even simpler, no vector store) covers it.
-- **Cases 2, 6, 7** (unresolved-thread escalation — the same complaint recurring for
-  weeks with no acknowledgment) are where Honcho's reasoning pipeline earns its keep —
-  this is genuinely hard to hand-build well, and is close to Honcho's actual job.
-  Worth prototyping Honcho specifically for this layer, gated on resolving the
-  AGPL/self-hosting question first.
-- **Case 8** (booking/action-state continuity — the single highest-priority finding)
-  is orthogonal to this whole decision and needs its own explicit design (a commitment
-  ledger: was this action actually completed, don't say "waiting on the doctor" unless
-  it's true) — don't let picking a memory backend substitute for solving this.
-- **Case 5, 10** (proactive follow-up, volunteered financial data) need timestamps +
-  a follow-up mechanism on top of whichever store is chosen — an incremental add either
-  way, not a differentiator between options.
-
-Net: if the priority is the unresolved-thread/reasoning cases, Honcho is worth the added
-infra. If the priority is the stable-fact and booking-state cases, a narrow custom
-build gets there with far less new infrastructure to operate. Starting position for
-discussion, not a decision — flagging explicitly per this org's style of asking before
-committing on an architecture call.
-
-## Recall strategy (voice-specific tradeoff, from mh's still-open question)
-
-mh-oan-api's own open question — model-driven tool call vs. unconditional retrieval
-every turn — resolved here per the **compute-budget principle above**: a nudge-covered
-mid-turn tool call is still a sequential wait from the farmer's perspective, so it's not
-the preferred shape even though the codebase already has the pattern available.
-
-- **Structured profile layer**: a cached, zero-LLM-call preload, kicked off the moment
-  identity resolves (mirroring mh's `preload_farmer_profile` and this repo's own
-  `farmer_info`/SHC-context pattern) — cheap enough to sit directly on the hot path
-  regardless of which option gets built.
-- **Episodic/"deep" recall**: not a mid-turn tool call the agent waits on. Prefer
-  triggering it in parallel with whatever already happens first in a session (STT,
-  greeting) so it's ready by the time it's needed, or doing the reasoning
-  post-session so the *next* call starts already informed. A live, nudge-covered tool
-  call is the fallback for the rare case that genuinely can't be anticipated, not the
-  default design.
+- **Simple facts** (cooperative, animal count, which linked account): a plain,
+  instant lookup, kicked off the moment the caller's identity is known — cheap enough
+  to sit directly in the live turn regardless of anything else.
+- **Anything deeper**: not something the live bot waits on mid-turn. Either started
+  in parallel with whatever already happens first in a call (so it's ready in time),
+  or reasoned about after the call ends so the *next* call already has it. A live,
+  mid-call lookup is the fallback for a rare case that genuinely couldn't be
+  anticipated — not the default design.
 
 ## Open questions
 
-- Farmer-profile-cache retention: 7d (module docstring) vs. 17d
-  (`farmer_animal_api_cache_ttl`) — which is actually authoritative? Doesn't block
-  memory design directly but worth resolving since any memory-retention policy will
-  get compared against it.
-- Scope: farmer persona, doctor persona, or both? Different memory shape for each
-  (herd-level vs. per-animal case history) — needs a decision before schema work
-  starts.
-- AGPL-3.0 licensing implications of self-hosting Honcho in this product — a real
-  check, not just a technical one, before treating Option B as viable.
-- Cost/ops of running Honcho's Postgres+pgvector+deriver worker alongside the existing
-  Redis-only footprint — justified for Amul's traffic volume specifically vs.
-  BharatVistaar/mahaVistaar?
-- Does memory apply to guests at all, or signed-in only (mirroring mh's guest-gate,
-  and this repo's existing `signed_in` field)? Leaning signed-in-only, not decided.
-- Voice-vs-chat parity: same memory for both channels from day one, or does one lead?
+- Which of the two cache lifetimes for the farmer record is actually correct — 7 days
+  or 17 days? (Two different places in the code disagree.) Doesn't block memory design
+  directly, but worth resolving since a memory-retention policy will get compared
+  against it.
+- Scope: farmer mode, doctor mode, or both? Different shape of memory needed for each
+  — needs deciding before the field/schema work starts.
+- Does memory apply to callers who haven't signed in at all, or only to signed-in
+  farmers? Leaning toward signed-in-only, not decided.
+- Same memory for phone calls and the chat app from day one, or does one come first?
