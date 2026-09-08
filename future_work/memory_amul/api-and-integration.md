@@ -323,3 +323,76 @@ asking a model nicely:
 The prose is the only thing the agent reads back to a farmer, so **a tag that is never
 in the prose can never be spoken.** The rule in short: store the tag, match on the tag,
 never say the tag.
+
+---
+
+## Embedding: store memories as documents, queries as questions
+
+`multilingual-e5-large` is trained **asymmetrically** — a stored passage and a
+question about it are meant to be encoded differently. Amul's own knowledge-base
+search already does half of this (`MARQO_USE_E5_QUERY_PREFIX`,
+`agents/tools/search.py:137`); the memory service originally did neither, embedding
+stored memories and incoming queries identically.
+
+Marqo exposes the distinction through `content_type`, so that is used rather than
+hand-prepending `passage: ` / `query: `. The measurement that settled it:
+`content_type=query` is **identical** to plain text (cosine 1.000000), so the side
+that was actually wrong was the *write* path — memories were being stored encoded as
+though they were questions.
+
+Four combinations were measured on a labelled set of realistic memory headlines and
+real farmer questions:
+
+| Config | Right memory returned | Relevant avg | Routine avg | Separation |
+|---|---|---|---|---|
+| store raw, query raw (original) | 9/10 | 0.833 | 0.779 | 0.054 |
+| **store document, query query (chosen)** | **10/10** | 0.828 | 0.786 | 0.042 |
+| store `passage:`, query `query:` (manual) | 9/10 | 0.829 | 0.781 | 0.048 |
+| store document, query `query:` | 10/10 | 0.825 | 0.786 | 0.040 |
+
+So it improves **ranking** — which memory comes back — and does nothing for absolute
+scores. That matters for the next section.
+
+The convention is part of `EMBED_MODEL_ID` (`.../doc-query`), because a store written
+under the old symmetric convention is not comparable with queries under the new one.
+`reembed.py` rebuilt the existing vectors; old vectors cannot be converted, only
+recomputed.
+
+## A score threshold does not work — measured, twice
+
+**Finding (2026-09-08): score-based gating cannot separate "this is on record" from
+"nothing like this is on record" here.** Recorded because it is counter-intuitive and
+will otherwise be attempted again.
+
+Calibrated on the real store via `search_expanded` (the Level-3 path), with 11
+agent-style recall queries whose answer *is* on record and 9 about topics the same
+farmer never raised:
+
+| | n | range | mean |
+|---|---|---|---|
+| should find something | 11 | 0.768 – 0.875 | 0.825 |
+| should find nothing | 9 | 0.741 – **0.852** | 0.785 |
+
+The distributions overlap heavily. "The mastitis treatment" — nothing remotely like
+it on record — scored **0.852**, higher than 7 of the 11 genuine recalls.
+
+| Floor | Keeps real recalls | Blocks false ones |
+|---|---|---|
+| ≥ 0.78 | 10/11 | 4/9 |
+| ≥ 0.82 | 5/11 | 8/9 |
+| ≥ 0.86 | 3/11 | 9/9 |
+
+A *relative* margin (top hit must beat the runner-up) was tested as an alternative
+and is no better: margin ≥ 0.005 keeps 10/11 but blocks only 1/9; margin ≥ 0.02
+blocks 6/9 but keeps only 6/11.
+
+**Why**: every memory and every query sits in the same narrow domain (one farmer,
+dairy, vet, payments), so cosine similarity measures *topical* closeness, not whether
+this specific thing is on record. Everything scores 0.74–0.88. The signal simply
+isn't in the number.
+
+**Consequence**: relevance for Level 3 has to be decided by something that can read
+the text, not by a number — or, better, avoided entirely by using a structured filter
+where the question is actually structured (see Section 6 of `memory-overview.md` on
+field filtering). A filtered lookup has no false-positive problem at all: no entry
+with `status=open` means zero rows, definitively, not a weak vector match.
