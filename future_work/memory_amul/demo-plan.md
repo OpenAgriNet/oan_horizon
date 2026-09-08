@@ -19,7 +19,7 @@ Two things to show:
   from `memory-overview.md` Section 6: two named vectors per entry (`headline` and
   `expanded`) and filter indexes on `farmer_id` / `type` / `status`.
 - **A memory API** — container `amul-memory-api` (source in
-  `/amulpfsdata/gautam/amul-memory-api/`), at `localhost:8100`. A thin service over
+  `/amulpfsdata/gautam/amul-memory/service/`), at `localhost:8100`. A thin service over
   Qdrant implementing exactly the Section 6 design:
   - `POST /memory/{farmer_id}/entries` — write an entry (never overwrites).
   - `POST /memory/{farmer_id}/search` — the quick, every-turn search (headline

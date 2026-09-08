@@ -4,16 +4,34 @@ What's actually built and running, with paths. The design reasoning is in
 `memory-overview.md`; this is the implementation surface.
 
 Two pieces:
-- **The memory service** — `/amulpfsdata/gautam/amul-memory-api/`, container
+- **The memory service** — `/amulpfsdata/gautam/amul-memory/service/`, container
   `amul-memory-api`, `localhost:8100` (in-network: `http://amul-memory-api:8100`).
+  The background writer lives beside it in the same repo, at
+  `/amulpfsdata/gautam/amul-memory/dreamer/` — one repo, since the two halves share
+  the entry shape and every storage rule.
   Stores and serves memory. Owns the per-farmer on/off decision.
 - **The bot integration** — `amul-oan-api`, branch **`memory_v0`**:
   `app/services/memory.py` (the read + prompt-block builder), plus a small change
   in `app/services/chat.py` and `agents/deps.py`.
 
 Storage: Qdrant (container `amul-qdrant`, `localhost:6350`), collection
-`amul_memory`. Embeddings: the same Marqo model Amul's knowledge base already uses
-(`multilingual-e5-large`, 1024-dim) — chosen because memory text is often Gujarati.
+`amul_memory`. The collection and its payload indexes are created by the service on
+startup, so the store is reproducible from `memory_api.py` alone.
+
+**Why there is a second service (Marqo) at all, when the store is Qdrant.** Qdrant
+stores and searches vectors; it does not create them. Something has to turn "his
+buffalo went off feed" into 1024 numbers — at write time, and again at query time,
+with the *same* model both times, or the numbers aren't comparable and search
+silently returns nonsense. That embedding call is the only thing outside Qdrant, and
+it goes to the Marqo instance Amul already runs, using the same model as Amul's
+knowledge base (`multilingual-e5-large`, 1024-dim). Two reasons: memory text is
+frequently Gujarati, so an English-first model would be a poor fit (cross-language
+retrieval was verified — a Gujarati memory is found by an English query and the
+reverse); and it is already running and already the thing the rest of Amul embeds
+with, so there is no second model to host or keep in sync. The alternative is to
+bundle the model into the service and embed in-process — worth doing only if the
+network hop becomes a problem, and it would have to be the same weights or the whole
+collection needs re-embedding.
 
 ---
 
@@ -185,8 +203,16 @@ Worth recording why, so it isn't rebuilt the same way:
   lone weak one to 1.00. Fixing that (absolute scales: raw cosine for dense, fraction
   of query keyword weight matched for sparse) worked, but the IDF gap remained.
 
-Sparse vectors are still written on every entry, so this can be switched back on
-without re-indexing — but it shouldn't return until IDF is done and measured.
+**All of the keyword machinery has since been deleted** (2026-09-08) — the
+tokeniser, the English+Gujarati stopword list, the crc32 sparse embedder, and the two
+sparse vectors that were being written on every entry. It was dead weight sitting in
+the write path of every single memory, and the live collection was migrated to
+dense-only vectors to match. Keeping it "ready to switch back on" was not worth the
+code: if hybrid returns it needs corpus IDF and a measurement, which is a different
+implementation anyway, not this one re-enabled.
+
+**Search is therefore semantic only, and the store holds two vectors per point** —
+`headline` and `expanded`, both 1024-dim cosine.
 
 ---
 
