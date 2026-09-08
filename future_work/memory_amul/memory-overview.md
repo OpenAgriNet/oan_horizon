@@ -93,20 +93,31 @@ review below and later discussion, and are now just as load-bearing.
 
 ## 3. What we're actually building — feature areas
 
-### 3a. Farmer-facing memory — three layers
+### 3a. Farmer-facing memory — three layers, all time-stamped
 
-- **Quick facts** — cooperative, animal count/species, which linked account they
-  usually mean. Looked up instantly, no search needed. Used per principle 6: to phrase
-  a confirmation, not to state a fact outright.
-- **Case status** — for anything that spans multiple visits (an unresolved complaint,
-  a sick animal, a pending booking): a compact, current record — what it's about, when
-  first and last raised, how many times, what's been tried, and its status. Per
-  principle 7, status should read like "not confirmed booked in this chat" rather than
-  "not booked" — never claim certainty about the world outside this chat.
-- **A general tracker** (from Example B2) — not tied to one topic. A farmer can save
-  and update information about anything over time — feed costs, a treatment's
-  progress, cash flow — and ask about it later. One reusable feature instead of a
-  one-off for each topic.
+- **Layer 1 — the standing summary.** A short (roughly 200 words), always-true
+  write-up of the farmer — cooperative, animal count/species, which linked account
+  they usually mean, and a couple of lines of general context. Looked up instantly,
+  no search needed, useful on basically every turn regardless of topic. Used per
+  principle 6: to phrase a confirmation, not to state a fact outright. Kept up to
+  date by the background reflection step (Section 3c).
+- **Layer 2 — the memory index.** Everything that spans multiple visits (an
+  unresolved complaint, a sick animal, a pending booking) — but stored as a short,
+  2-sentence **headline** per entry, not the full detail. This is what gets searched
+  automatically on every turn, based on the farmer's current question (a quick "find
+  the closest few matches" lookup, not a full re-read of everything). Each entry
+  carries a status per principle 7 ("not confirmed booked in this chat," never a flat
+  "not booked"), and is added to or updated over time, not just written once (see
+  Section 6 for exactly how).
+- **Layer 3 — the expanded version.** The fuller detail behind each Layer 2 headline.
+  Not searched automatically every turn — if a headline looks relevant, the bot makes
+  a deliberate tool call to dig into it properly, which is allowed to be a more
+  thorough, multi-step search (see Section 6) since it's no longer on the path every
+  single turn has to wait through.
+- **A general tracker** (from Example B2), living in Layer 2 — not tied to one topic.
+  A farmer can save and update information about anything over time — feed costs, a
+  treatment's progress, cash flow — and ask about it later. One reusable feature
+  instead of a one-off for each topic.
 
 ### 3b. "Memory x Reasoning" — proactive, scheduled follow-ups
 
@@ -114,11 +125,24 @@ A capability, not just a data store: the bot (or the background reflection step,
 3c) can decide something is worth checking on later, and follow up without being
 asked.
 
+**A real platform constraint that shapes how this actually gets delivered on chat**:
+Amul's chat isn't its own app — it's an iframe embedded inside something else, so it
+has no way to push an actual notification to a farmer between visits. On chat, "follow
+up without being asked" can't mean "message the farmer out of the blue" — it has to
+mean **something waiting for them the next time they're already there.**
+
 **Core building block**: a reminder/check-in ticket — farmer, a trigger (a date, or a
 condition like "when this scheme opens"), and what to check or say. A simple scheduler
 (same shape as background jobs already in the codebase, e.g. `scheme_scheduler.py`)
-watches for due tickets and either sends a message or preps context for the farmer's
-next call.
+watches for due tickets. On chat, delivery means turning a due ticket into an entry in
+the **existing suggested-questions block** already shown in the UI — something like
+"see if your payment issue is sorted" or "check on your booking" sitting there as a
+tappable suggestion the next time the farmer opens the chat, not a push notification.
+The farmer taps it (or doesn't) entirely on their own terms — this actually makes the
+"always opt-in, never intrusive" guardrail below easier to guarantee, not harder,
+since there's no way to interrupt someone through this surface even if we wanted to.
+(Voice is a different channel with its own delivery options — RAYA calls/SMS aren't
+limited by the chat iframe — but that's a separate decision, not assumed here.)
 
 **Feature list (draft — add to this as more comes up):**
 - Re-check a stuck status later (e.g. "is this payment still not showing up?") and
@@ -141,6 +165,11 @@ next call.
 - Easy to turn off, and stop offering something a farmer has declined repeatedly
   (Example F2) — be deliberate about *when* to prompt a farmer at all; every proactive
   message costs their time and attention.
+- On chat, every item in the feature list below (the daily reminder, the vaccination
+  nudge, the loan-status watch, etc.) delivers as a suggested question waiting for the
+  farmer next time, per the platform note above — not a literal message sent to them
+  in between visits. Read "remind" and "follow up" below as "have something ready to
+  check on," not "proactively contact."
 
 ### 3c. What the background reflection ("dreaming") step should also produce
 
@@ -158,6 +187,13 @@ essentially free outputs of the same pass, all **Amul-facing, not farmer-facing*
 - **A draft glossary/translation-correction queue** (Example D3) — when a farmer
   corrects the bot's wording, draft that as a suggested glossary entry for a human to
   verify, not a silent live behavior change.
+- **Noticing when one phone number might actually be more than one person** — if the
+  facts building up for one identity start genuinely contradicting each other in a way
+  that suggests two different people are using the same account (see Example D1),
+  don't try to guess who's who. Flag it and **stop using memory for that identity**
+  until it's resolved. A wrong guess here is worse than no memory at all (principle
+  3) — this turns a risk we'd otherwise just have to avoid outright into something we
+  can actually detect and handle safely.
 
 ---
 
@@ -309,9 +345,12 @@ sharpest privacy requirements in this whole document if it's ever built.
 
 - **Example A1** (vets seeing a full cross-visit case history) — not in scope for us
   right now.
-- **Example D1** (telling apart multiple people sharing one household phone) — too
-  risky; getting this wrong (e.g. leaking one family member's info to another) is
-  worse than not attempting it.
+- **Example D1** (telling apart multiple people sharing one household phone) —
+  actively telling them apart is still too risky; getting this wrong (e.g. leaking one
+  family member's info to another) is worse than not attempting it. What we're doing
+  instead: have the background reflection step notice *when* an account looks like
+  it's shared (contradicting facts building up) and turn memory off for it, rather
+  than guess who's who (see Section 3c) — a safe fallback, not the same as solving D1.
 - **Example D2** (texting a farmer after every dropped call) — avoidable; people
   usually already know when a booking didn't go through, and this would mostly just be
   annoying.
@@ -451,6 +490,62 @@ ourselves. Zero new infrastructure, reusing what's already running and already
 trusted elsewhere in the org (`mh-oan-api` runs its own memory system on Qdrant in
 production today).
 
+### More detail on Honcho, for the record
+
+Honcho's own "fast" option (its equivalent of our Layer 1/2) is a real, working
+feature — worth understanding exactly what it does, since it's basically the same
+shape as what we're building. It takes the farmer's current question, turns it into a
+search, and pulls back a capped number of matching notes (100 by default) — no AI
+"thinking" step, just a lookup, same speed class as our own design. So functionally,
+Honcho's fast path and our Layer 2 are doing near-identical things.
+
+**Could we use Honcho but point it at Qdrant instead of a new database, to get the
+best of both?** Checked directly — no. Honcho only supports three specific vector
+stores: its default (Postgres, "pgvector"), a paid cloud search service
+("Turbopuffer," needs its own account and API key — not something we'd self-host),
+and an embedded local option ("LanceDB"). **Qdrant isn't one of the supported
+options at all** — using it would mean writing and maintaining our own custom
+integration code for Honcho, not flipping a setting, which defeats the entire point
+of adopting a ready-made product in the first place.
+
+And even that doesn't fully solve the infrastructure question: no matter which of
+those three vector stores gets used, **Honcho still requires Postgres underneath for
+everything else** — workspaces, sessions, the message log, its background work
+queue. The vector-store setting only changes where embeddings specifically go; it
+doesn't remove Postgres from the picture. So there's no configuration of Honcho that
+gets us down to "just Qdrant, nothing else new" — Postgres (or a paid third-party
+service) is required either way, plus its own dedicated Redis, plus its own
+permanent background program. That's the real reason it's not worth it for us: not
+because its fast-path feature is bad — it's genuinely comparable to what we're
+building — but because there's no path to getting that feature without also taking
+on infrastructure we've specifically decided against.
+
+### More detail on Graphiti, for the record
+
+Graphiti's fast path works the same way ours will — a similarity search plus a
+keyword search, no AI step, sub-second. The appeal, as covered above, is that it can
+also hand back real structured fields and keeps a history of how a fact changed,
+which our from-scratch build has to earn by hand.
+
+**Could using the lighter graph-database option (FalkorDB instead of Neo4j) make
+this a non-issue?** It genuinely helps — FalkorDB speaks the same protocol Amul's
+Redis already does, so it's a smaller leap than a full separate database system like
+Neo4j. But it's still a **new, separate service to run, monitor, and back up** — not
+nothing, just less than Neo4j. And critically, the vector-search part is **built
+directly into each graph backend** (checked directly in Graphiti's own code — every
+supported database, Neo4j, FalkorDB, or otherwise, has its own vector-search code
+bundled in) — there's no way to tell Graphiti "use Qdrant for the searching part,
+just use FalkorDB for the graph structure." Adopting Graphiti in any form means
+running a database that duplicates what Qdrant already does for us, full stop.
+
+One more practical catch worth knowing: Graphiti's structured-field extraction is
+explicitly documented to work best with providers that support genuine structured
+output (the major hosted ones) — it warns that smaller or self-hosted models can
+produce broken results. Since this only runs in the background (Section 2's
+compute-budget principle), that's not a blocker — we could route just this specific
+step to a stronger model regardless of what serves live chat — but it's a real
+detail to plan for, not assume away.
+
 ---
 
 ## 6. How this actually gets built
@@ -527,17 +622,46 @@ Every single lookup starts with "only look at this one farmer's own memories" �
 never search across everyone's. Beyond that, there are three different shapes,
 and using the right one matters more than making the search itself cleverer:
 
-- **A known, stable fact** (cooperative, animal count) — no search at all, just read
-  the field directly. Instant.
+- **A known, stable fact** (Layer 1's standing summary) — no search at all, just read
+  it directly. Instant.
 - **A known category, just not which specific entry** (the bot's about to book a vet
   visit, so it wants "any open booking for this farmer") — filter by category and
   "still current," no search needed — more reliable than a fuzzy search since it
   doesn't depend on wording lining up.
-- **A genuinely open-ended question**, where we don't know in advance what it relates
-  to — this is where a real similarity search earns its place: turn the question into
-  something searchable, look only within that one farmer's own (small) set of
-  memories, take the closest matches. Since it's already narrowed to one person's
-  history, a plain search performs well without needing anything fancier layered on.
+- **A genuinely open-ended question** (Layer 2's job) — where we don't know in advance
+  what it relates to. Turn the question into something searchable, look only within
+  that one farmer's own (small) set of headline entries, take the closest matches.
+  Since it's already narrowed to one person's history, a plain search performs well
+  without needing anything fancier layered on.
+
+**Getting both a quick headline search and a deeper, expanded one out of the same
+database.** Qdrant supports attaching *more than one* embedding to the same stored
+entry. So each Layer 2 entry carries two: one generated from its short headline, one
+generated from its fuller Layer 3 detail. The automatic, every-turn search (above)
+only ever searches the headline embeddings — fast, and that's all it needs. When the
+bot decides a headline is worth digging into, it makes a tool call that searches the
+*expanded* embeddings specifically instead — which can genuinely be a multi-step,
+try-a-search-then-try-another kind of search, since it's gated behind a deliberate
+tool call and not sitting on the path every turn has to wait through (Section 2,
+principles 1 and 2).
+
+### Two more things worth borrowing from how Honcho organizes its memory
+
+Neither of these needs Honcho itself — just the ideas, built cheaply on the same
+Qdrant setup:
+
+- **Point back to the original conversation instead of copying it.** Rather than
+  storing a farmer's exact original words inside the memory entry (more raw, possibly
+  sensitive text sitting in a place it doesn't need to be — see principle 8), keep a
+  reference to where it came from (which conversation, roughly when). If the deep,
+  Layer 3 search ever genuinely needs to see the exact original wording, it can fetch
+  that from Amul's existing conversation logs, which already store it — no need for
+  memory to keep its own second copy.
+- **Keep a "built from" trail on anything the reflection step concludes.** When the
+  background step notices something bigger — "this is the third time this complaint's
+  come up" — have it record which specific earlier entries that conclusion came from.
+  Cheap (just a list of IDs), but it means a conclusion is never an unexplainable black
+  box — if it's ever wrong, we can trace exactly why it was reached.
 
 ---
 
