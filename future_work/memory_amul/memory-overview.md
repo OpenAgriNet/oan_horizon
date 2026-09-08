@@ -81,13 +81,34 @@ review below and later discussion, and are now just as load-bearing.
    life.** Never assume something didn't happen just because it's not in memory (a
    farmer may have booked a vet visit some other way entirely). Track status as "not
    confirmed in this chat," never as a flat "this didn't happen" (Example 8).
-8. **Never store raw identifying numbers.** No ear tag numbers, no exact account or
-   transaction IDs, in the memory system itself. Describe things instead ("a
-   recurring deduction around ₹1,200, mid-August" rather than quoting the exact
-   ledger line-item ID) — enough to be useful without creating a second copy of
-   identifying data that already lives, properly secured, in Amul's real systems. If
-   an exact ID is ever genuinely needed, look it up live from those systems at that
-   moment — don't duplicate it into memory just in case.
+8. **Don't duplicate identifying numbers into memory — with one deliberate
+   exception.** Account numbers, transaction IDs, phone and registration numbers are
+   not stored at all. Describe things instead ("a recurring deduction around ₹1,200,
+   mid-August" rather than the exact ledger line-item ID) — enough to be useful
+   without creating a second copy of identifying data that already lives, properly
+   secured, in Amul's real systems. If an exact ID is genuinely needed, look it up
+   live at that moment.
+
+   **The exception is an animal's ear tag, and it is stored on purpose** (decided
+   2026-09-08). It is the one identifier that does real work for memory rather than
+   just duplicating a record: it turns "is this the same animal as last time?" from a
+   guess into a certainty, which is exactly what per-animal clinical continuity needs
+   (Examples 8 and 10). Semantic matching cannot reliably tell "her black buffalo"
+   from "the other black buffalo"; a tag can.
+
+   It is stored under two hard constraints, both enforced in code rather than left to
+   a prompt instruction:
+   - **It lives only in structured metadata (`metadata.animal_id`), never in the
+     `headline` or `expanded` prose.** The prose is what the assistant reads back to
+     the farmer, so an ID that is never in the prose can never be spoken. The dreamer
+     checks the prose and moves an ID out if the model put one there anyway.
+   - **The agent is never shown it.** The farmer-scoped key list that gets injected
+     every turn strips `animal_id` (and any other identifier-shaped key) before the
+     agent sees it. The tag is bookkeeping for the dreamer's matching step; the
+     conversation always uses the farmer's own words — "her cow", "the one that calved
+     in June".
+
+   So: **store the tag, match on the tag, never say the tag.**
 
 ---
 
@@ -95,12 +116,40 @@ review below and later discussion, and are now just as load-bearing.
 
 ### 3a. Farmer-facing memory — three layers, all time-stamped
 
-- **Layer 1 — the standing summary.** A short (roughly 200 words), always-true
-  write-up of the farmer — cooperative, animal count/species, which linked account
-  they usually mean, and a couple of lines of general context. Looked up instantly,
-  no search needed, useful on basically every turn regardless of topic. Used per
-  principle 6: to phrase a confirmation, not to state a fact outright. Kept up to
+- **Layer 1 — the standing record.** A handful of short facts about the farmer that
+  hold across conversations. There is exactly one per farmer at a fixed address, so
+  it is a direct document read — no search, no ranking, nothing to get wrong. Used
+  per principle 6: to phrase a confirmation, not to state a fact outright. Kept up to
   date by the background reflection step (Section 3c).
+
+  **The fields are fixed and identical for every farmer** (decided 2026-09-08). A
+  free-form "write up ~200 words about this farmer" summary was rejected: it drifts in
+  shape between farmers, it grows, and there is no way to tell whether a given farmer's
+  version is missing something or simply had nothing to say. The schema is:
+
+  | Field | What it holds |
+  |---|---|
+  | `name_used` | What the farmer is actually called in conversation |
+  | `usual_account` | Which linked account they mean by "my milk" — a *preference*, not the account list |
+  | `language_register` | Which language, and short answers vs. full explanations |
+  | `animal_references` | The words they use for their own animals, so the bot can use them back |
+  | `usual_topics` | What they normally contact about, across several separate chats |
+  | `standing_sensitivities` | Something that should change tone every time — a loss, a long grievance. Rare |
+  | `explicit_requests` | Anything they directly asked the bot to remember, or to stop doing |
+
+  **Only the populated fields are stored and injected.** A farmer we barely know
+  contributes one line, not seven empty ones — an empty field costs nothing, a guessed
+  one is injected into every future conversation. In practice most farmers will have
+  two or three.
+
+  **What is deliberately NOT in here**, even though a "profile" obviously suggests it:
+  village, district, union, how many animals they have and of what species, which
+  accounts are linked, any milk or payment figure. All of that arrives from Amul's own
+  systems on every single turn via `farmer_info`. Copying it into memory would only
+  create a second, staler version of a fact we already have correctly — and it is the
+  single easiest way for this system to start confidently telling farmers things that
+  stopped being true weeks ago. **Layer 1 holds what we learned by talking to them,
+  and nothing that can be looked up.**
 - **Layer 2 — the memory index.** Everything that spans multiple visits (an
   unresolved complaint, a sick animal, a pending booking) — but stored as a short,
   2-sentence **headline** per entry, not the full detail. This is what gets searched
@@ -561,6 +610,70 @@ Within that shape, two decisions have to be made deliberately — neither Honcho
 Graphiti would have made these for us either, so this is real work either way, not
 something lost by not adopting them.
 
+### How the background job divides the work
+
+Decided 2026-09-08. Three rules, and each one exists for a reason:
+
+**1. A hard cap of 10 turns per prompt.** Not "as much as fits in the context window."
+The extraction quality of a small model falls off well before its context limit does —
+give it fifty turns and it summarises instead of extracting, and quietly drops the one
+unresolved thing that mattered. Whole conversations are packed into a chunk while they
+fit under the cap; a single conversation longer than 10 turns is split across
+consecutive chunks. Keeping conversations intact where possible matters, because
+extraction is much better when it can see a problem raised *and* answered in the same
+window.
+
+**2. A batch holds one chunk each from many farmers — never two chunks of the same
+farmer.** A farmer's memory state changes as their own chunks are processed (chunk 3
+needs to see what chunk 2 wrote, or it will re-create the same entry as new). So one
+farmer's chunks are strictly ordered and cannot be worked on in parallel. Different
+farmers are completely independent, so those go side by side freely. Chunks are handed
+out round-robin, which means **a farmer with a long history simply finishes in a later
+batch.** That's the intended trade: heavy users take longer, nobody's memory gets
+processed out of order. Run daily and almost everyone completes in the first batch or
+two — the long tail only appears on a first backfill.
+
+**3. Strictly chronological.** By chunk N the store contains exactly what it would have
+contained had this been running live since the farmer's first conversation. This isn't
+tidiness — it's what makes the backtest in `backtesting-plan.md` meaningful instead of
+circular. A replay that used memory built from the farmer's *later* conversations would
+be grading the bot on answers it couldn't have known.
+
+### The three layers are written in order, by separate prompts
+
+Per chunk: **Layer 3 → Layer 2**, then once a farmer's chunks are done, **Layer 1**.
+
+Each stage is its own small prompt rather than one call producing everything, following
+the standing engineering preference (`oan-brain/style/swe-style.md`): a small model
+split into narrow steps, with validation on top, beats one large call — and each step
+can be graded on its own.
+
+1. **Extract (Layer 3)** — what, if anything, in these turns is worth remembering, in
+   full detail. Most chunks correctly produce zero entries.
+2. **Match** — for each candidate, is this the same situation we already track, or
+   genuinely new? Defaults to "new"; the costs are not symmetric (Decision 2 below).
+   On a merge, the earlier detail is carried forward rather than replaced — the point
+   of an update is the thread.
+3. **Headline (Layer 2)** — a *separate* call writes the two sentences that get
+   injected into every future turn. Separate for two reasons: after a merge the entry
+   covers more than its old headline said, so the headline has to be rewritten; and
+   this is the highest-stakes text in the system, shown on every turn whether it is
+   relevant or not, so it earns a prompt whose only job is getting it right. If this
+   pass fails or returns something absurd, the extracted headline stands — a broken
+   rewrite must never replace a working headline.
+4. **Standing record (Layer 1)** — runs once, after the farmer's queue drains, not per
+   chunk. It is meant to be stable; re-deriving it after every chunk would turn it into
+   a running log, which is exactly what Layer 2 already is.
+
+   One thing worth recording, because it was wrong on the first attempt: this pass
+   cannot run on the Layer-2 headlines alone. Three of the seven fields — what the
+   farmer is called, how they want to be spoken to, and the words they use for their
+   own animals — exist *only* in the farmer's own phrasing, which the headlines have
+   already paraphrased away. So the pass also gets a bounded sample (10 lines) of what
+   the farmer actually typed, their side only, with an explicit instruction to read it
+   as evidence of *how* they speak and not to promote the content of those questions
+   into standing facts.
+
 ### Decision 1 — what's worth storing
 
 This comes from an explicit instruction sheet we write for the background job, not
@@ -574,8 +687,10 @@ something an AI figures out by itself. Concretely, it should say:
   don't just restate what's already sitting in the farmer's live account record
   (that's re-fetched fresh every time anyway, no need to duplicate it).
 - **Never extract**: anything from principle 4/Example F3 (side-sales, admissions of
-  anything risky, pure venting with nothing actionable) — and, per principle 8, never
-  the exact raw ID of anything (ear tags, transaction numbers) — describe it instead.
+  anything risky, pure venting with nothing actionable) — and, per principle 8, no
+  account, transaction, phone or registration numbers; describe the thing instead. An
+  animal's ear tag is the one exception, and it goes into `metadata.animal_id` only,
+  never into the text.
 
 This list isn't invented from nothing — it's a direct translation of Section 4's
 taxonomy and Section 2's principles into rules an AI can actually follow.
@@ -584,8 +699,12 @@ taxonomy and Section 2's principles into rules an AI can actually follow.
 
 The harder one. A new fact might be worded completely differently from an existing
 memory about the same underlying issue (Example 7's "12 animals, only 5 show online"
-vs. "0 milking animals" are the same complaint, said two different ways). Since we're
-not storing raw IDs to match on (principle 8), this has to be done by meaning:
+vs. "0 milking animals" are the same complaint, said two different ways). For most
+entries there is no identifier to match on, so this has to be done by meaning. The
+exception is animal health notes: when both sides carry an `animal_id`, that settles
+it outright — same tag means the same animal, different tags mean different animals
+and therefore a new entry, no matter how similar the wording. That is the whole
+reason the tag is stored (principle 8). Where there is no tag:
 
 1. Before saving something new, the background job searches that farmer's *existing*
    current entries of the same category for anything that looks like the same

@@ -21,7 +21,7 @@ Storage: Qdrant (container `amul-qdrant`, `localhost:6350`), collection
 
 | Level | What it is | How the agent gets it | Cost per turn |
 |---|---|---|---|
-| **1. Standing summary** | ~200-word always-true summary of the farmer | **Injected automatically, every turn** | One plain filter, no search, no AI |
+| **1. Standing record** | Fixed 7-field schema, only the populated fields | **Injected automatically, every turn** | One document read by id — no search, no AI |
 | **2. Headline index** | 2-sentence headline per memory, with status | **Injected automatically, every turn** — top-k matched against the farmer's current question | One embedding + one vector search |
 | **3. Expanded detail** | The fuller text behind each headline | **Not injected.** Fetched only when the agent deliberately asks | Nothing, unless asked |
 
@@ -84,7 +84,8 @@ The service supports more filters than the agent's tool exposes (`type`, `status
 and the background job and ops views use them; the agent's surface stays minimal so
 there are fewer untested paths in the model's hands.
 | `GET` | `/memory/{farmer_id}/entries?type=&status=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?" |
-| `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values |
+| `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values. Identifier-shaped keys (`animal_id`, account/transaction/phone) are stripped here — see the ID policy below |
+| `GET` | `/memory/{farmer_id}/profile` | **Level 1.** The standing record. A point read by deterministic id, not a query. Returns only the populated fields |
 
 `farmer_id` is applied **in code** on every one of these — never passed in a filter a
 caller controls, so a query structurally cannot reach another farmer's memories.
@@ -94,7 +95,8 @@ caller controls, so a query structurally cannot reach another farmer's memories.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/memory/{farmer_id}/entries` | Write a new entry. Never overwrites |
-| `PATCH` | `/memory/{farmer_id}/entries/{id}` | Update = close out the old version (`valid_to` set) **and** write a new one, so history is preserved |
+| `PATCH` | `/memory/{farmer_id}/entries/{id}` | Update = stamp the old version `superseded_at` **and** write a new one, so history is preserved. Accepts `source_ts` so an update advances *last mentioned* while `first_source_ts` keeps the start |
+| `PUT` | `/memory/{farmer_id}/profile` | Replace the standing record. Body: `{fields: {...}, source_ts?}`. Unknown field names are ignored and reported back, so the schema cannot drift; the previous version is kept as history |
 | `POST` | `/keys/doc` | Record what a newly invented key means. Body: `{key, description, example_values}` |
 
 ### On/off per farmer
@@ -131,8 +133,11 @@ entries), so it must never be handed to the agent — that's what
 
 **System fields** (what the service filters on — stable, don't let the model write
 these): `farmer_id`, `type` (`profile` | `complaint` | `booking` | `health_note` |
-`tracker` | `derived`), `status` (`open` | `resolved` | `pending` | `n/a`),
-`times_raised`, `headline`, `expanded`, `valid_from`, `valid_to`, `expires_at`,
+`tracker` | `derived`, plus two internal-only types the read paths always exclude:
+`settings` and `profile_record` — note `profile_record` (the Level-1 standing record)
+is deliberately **not** the same as `profile`, which is an ordinary remembered fact),
+`status` (`open` | `resolved` | `pending` | `n/a`),
+`times_raised`, `headline`, `expanded`, `recorded_at`, `superseded_at`, `expires_at`,
 `source_session_id` / `source_ts` (a pointer back to the conversation, not a copy),
 `built_from` (entry ids a derived conclusion came from).
 
@@ -185,133 +190,6 @@ without re-indexing — but it shouldn't return until IDF is done and measured.
 
 ---
 
-## Memory service API
-
-### Reading (all farmer-scoped, all respect the on/off flag)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/memory/{farmer_id}/search` | **Level 2.** Semantic search over *headline* vectors only. Body: `{query, limit, only_current?, type?, status?, metadata_key?, metadata_value?, since?, until?, include_undated?}` |
-| `POST` | `/memory/{farmer_id}/search_expanded` | **Level 3.** Same, over *expanded* vectors. What the recall tool calls |
-
-The service supports more filters than the agent's tool exposes (`type`, `status`,
-`since`/`until`). That's deliberate: the service keeps them because they cost nothing
-and the background job and ops views use them; the agent's surface stays minimal so
-there are fewer untested paths in the model's hands.
-| `GET` | `/memory/{farmer_id}/entries?type=&status=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?" |
-| `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values |
-
-`farmer_id` is applied **in code** on every one of these — never passed in a filter a
-caller controls, so a query structurally cannot reach another farmer's memories.
-
-### Writing (the background job's surface)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/memory/{farmer_id}/entries` | Write a new entry. Never overwrites |
-| `PATCH` | `/memory/{farmer_id}/entries/{id}` | Update = close out the old version (`valid_to` set) **and** write a new one, so history is preserved |
-| `POST` | `/keys/doc` | Record what a newly invented key means. Body: `{key, description, example_values}` |
-
-### On/off per farmer
-
-| Method | Path | Purpose |
-|---|---|---|
-| `PUT` | `/memory/{farmer_id}/settings` | `{"memory_enabled": false, "note": "..."}` |
-| `GET` | `/memory/{farmer_id}/settings` | Check one farmer |
-| `GET` | `/settings` | Everyone with an explicit flag, and who's switched off |
-
-Stored in Qdrant next to that farmer's own memory — one source of truth, no separate
-flag store. **Default is on** (within the bot's global `MEMORY_ENABLED` switch), so
-the flag exists mainly to switch specific farmers *off*. Enforced in the service: a
-farmer who's off gets empty results from every read path, whatever was asked. A
-*failed* flag lookup also returns nothing, so the failure mode is never "memory
-leaked for someone disabled."
-
-### Ops / review (NOT for the agent)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/keys` | Every metadata key in use across **all** farmers — counts, sample values, which are undocumented |
-| `DELETE` | `/keys/{key}` | Drop a key from every entry that carries it, plus its doc |
-| `GET` | `/due?within_hours=24` | Entries lapsing soon — the trigger for proactive follow-ups |
-| `GET` | `/health` | Collection status, entry count, embedding model |
-
-`GET /keys` crosses farmer boundaries (its sample values come from other people's
-entries), so it must never be handed to the agent — that's what
-`/memory/{farmer_id}/keys` is for.
-
----
-
-## Entry shape
-
-**System fields** (what the service filters on — stable, don't let the model write
-these): `farmer_id`, `type` (`profile` | `complaint` | `booking` | `health_note` |
-`tracker` | `derived`), `status` (`open` | `resolved` | `pending` | `n/a`),
-`times_raised`, `headline`, `expanded`, `valid_from`, `valid_to`, `expires_at`,
-`source_session_id` / `source_ts` (a pointer back to the conversation, not a copy),
-`built_from` (entry ids a derived conclusion came from).
-
-**`metadata`** — one nested object for everything else. The model invents keys here
-freely; they can never collide with a system field. Still filterable later via
-`metadata.some_key`.
-
-### Three timelines, kept deliberately separate
-
-Conflating these is the easiest way to get memory wrong, so the field names now say
-which is which (an earlier version called record time `valid_from`/`valid_to`, which
-invited exactly that confusion):
-
-| Fields | Timeline | Known? | Used for |
-|---|---|---|---|
-| `recorded_at` / `superseded_at` | **Record** time — when *we* wrote or replaced a record | Always | Bookkeeping and versioning only. **Never shown to the agent, never used for date filtering** — after a backfill every entry shares the same `recorded_at`, so it says nothing about when anything happened |
-| `source_ts` / `first_source_ts` | **Event** time — when the farmer actually said it, and when the thread first came up | Almost always | The only thing date filters use. `first_source_ts` is preserved across updates so "how long has this been going on" is answerable from the current version alone |
-| `expires_at` | **Real-world** validity end — but only the narrow, knowable case | Rarely | Expiry and `GET /due`. Not a "when was this true" filter |
-
-**Real-world "true since / true until" is deliberately NOT a filterable field.** It's
-unknown for most facts, so filtering on it would silently drop nearly everything. It
-stays in the text, where the uncertainty can be stated honestly ("started about ten
-days ago") rather than flattened into a date that looks precise.
-
-**Undated entries are always included in a date-filtered search**, flagged "date not
-recorded" — an invisible relevant memory is a worse failure than an imprecise date.
-
-### Only the latest version is ever searched at runtime
-
-`only_current` defaults on and the recall tool hardcodes it, so a superseded version
-(e.g. `times_raised: 4` after it became 5) is never returned to the agent. Old
-versions are reachable only by explicitly asking for history. Verified.
-
-### Hybrid search: dense + sparse, tunable
-
-Every entry carries four vectors: dense `headline`/`expanded` (meaning, via Marqo's
-multilingual model) and sparse `headline_kw`/`expanded_kw` (literal word overlap).
-Searches run both and blend them with `MEMORY_HYBRID_ALPHA` (default `0.6` dense /
-`0.4` keyword — the same knob shape Amul's Marqo config already exposes).
-
-Both sides are scored on **absolute** scales, not normalised within the result set:
-dense uses raw cosine; sparse uses the *fraction of the query's own keyword weight
-that matched*. Two bugs came from getting this wrong first time — within-set
-normalisation turned a lone strong keyword hit into 0.00 and a weak one into a
-perfect 1.00, because the score depended on whatever else happened to match.
-
-Measured behaviour (α=0.6):
-
-| Query | Top hit | dense | keyword |
-|---|---|---|---|
-| "neem oil" (exact term in the text) | the skin-problem entry | 0.82 | **1.00** |
-| "1200 rupees" (exact number) | the deduction entry | 0.83 | **1.00** |
-| "the animal is unwell and losing hair" (paraphrase) | correct entry ranked, keyword near zero | 0.80 | 0.00 |
-| Gujarati paraphrase | the skin-problem entry | 0.81 | 0.00 |
-
-So exact terms and numbers are caught by the keyword side, paraphrases and Gujarati
-by the dense side — which is the point of having both.
-
-**Known gap**: the sparse side uses a stopword list, not real inverse-document-
-frequency weighting. Without corpus statistics, moderately common words are still
-over-weighted relative to rare ones. Worth closing before production; adequate for
-testing.
-
----
 
 ## How the bot integration works
 
@@ -328,7 +206,7 @@ shc_ctx, mem_ctx = await asyncio.gather(
 `fetch_memory_context` (in `app/services/memory.py`) then runs the three level-1/2
 reads in parallel, and builds one bounded prompt block:
 
-1. `GET /memory/{id}/entries?type=profile` → the standing summary
+1. `GET /memory/{id}/profile` → the standing record (Level 1)
 2. `POST /memory/{id}/search` → the top headline matches for this question
 3. `GET /memory/{id}/keys` → what else is on record
 
@@ -390,3 +268,32 @@ Moderation runs **before** memory injection, so a turn blocked by moderation nev
 reaches the agent and never sees memory (observed while testing: "why was money
 deducted from my account?" was classified non-agricultural and short-circuited).
 Relevant when picking demo queries.
+
+---
+
+## Identifiers: what is stored, and what the agent can see
+
+Amended 2026-09-08. Account numbers, transaction ids, phone and registration numbers
+are **not stored at all** — memory holds descriptions ("a deduction of around ₹1,200"),
+not ledger references.
+
+**An animal's ear tag is the exception, and it is stored on purpose.** It is the one
+identifier that does work for memory instead of just duplicating a record: it makes
+"is this the same animal as last time?" a certainty rather than a guess, which is what
+per-animal clinical continuity needs. Semantic matching cannot reliably separate "her
+black buffalo" from "the other black buffalo"; a tag can, and the match step uses it —
+same tag means same animal, different tags mean a genuinely new entry regardless of how
+alike the wording is.
+
+It never reaches a conversation, and that is enforced in three places rather than by
+asking a model nicely:
+
+| Where | What stops it |
+|---|---|
+| The dreamer's extraction prompt | Instructed to put the tag in `metadata.animal_id` only, never in `headline`/`expanded` |
+| The dreamer, after extraction | Checks the prose for the tag and moves it out if the model put it there anyway (`_strip_ids_from_prose`) |
+| The memory service, `GET /memory/{id}/keys` | Strips `animal_id` (and account/transaction/phone keys) from the agent-facing key list, so the always-injected block can never carry it |
+
+The prose is the only thing the agent reads back to a farmer, so **a tag that is never
+in the prose can never be spoken.** The rule in short: store the tag, match on the tag,
+never say the tag.
