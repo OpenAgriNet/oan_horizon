@@ -1016,3 +1016,145 @@ account — none of which any single fragment contained.
 Retrieval improved too, which was not the goal but follows: **recall@1 went from 8/9 to
 9/9** on a labelled set of nine recall queries, with recall@3 at 9/9 throughout. Fewer,
 truer episodes are easier to retrieve than many overlapping ones.
+
+---
+
+## The dreamer is an agent, not a pipeline
+
+Decided and built 2026-09-08, replacing the fixed `extract → match → write` sequence.
+
+The pipeline worked, but it could only ever do what it was told in the order it was
+told: one search, one comparison, one decision. That is precisely the work it got
+wrong — six live entries for a single grievance (see the consolidation section above).
+An agent can look, look again with different wording, notice that a situation is
+already tracked under a different *category*, and update or merge instead of writing
+another copy.
+
+It is given tools and left to decide: `search_memory`, `list_memory` (an exact filter
+— zero rows means *definitively* nothing, which no search can tell you),
+`known_keys`, `write_memory`, `update_memory`, `fold_memory`, `document_key`, and
+`nothing_to_remember` (the correct outcome for most conversations).
+
+**The farmer is never a tool parameter.** It comes from the context the agent was
+launched with, so the agent structurally cannot write into another farmer's memory.
+No prompt instruction is worth relying on for that.
+
+The old pipeline is kept behind `--pipeline` as a baseline to measure against, because
+the two make different mistakes. It goes through the same write path, though — a
+baseline should differ in how it *decides*, not in which rules it may skip.
+
+### Where parallelism helps, and where it is deliberately refused
+
+Checked before building on it: the local vLLM serving `gemma-4-31b-it` does support
+native tool calling, and it emits **several tool calls in one message** when they are
+independent.
+
+- **Read tools run concurrently.** "Search three ways before deciding anything is new"
+  costs one round trip instead of three, which is what makes looking properly
+  affordable.
+- **The three judges run concurrently** inside the write path.
+- **Writes stay serial, on purpose.** They mutate one farmer's store, and two
+  concurrent writes about the same situation would each search, each find nothing, and
+  each write — recreating the duplication all of this exists to prevent.
+
+For the record: the bugs in this system were **not** caused by parallelism. They came
+from provenance being write-shaped instead of event-shaped, and from rules living in
+one write path and not another.
+
+## Judges gate every write. They do not advise
+
+Three independent questions, run concurrently, sitting **in** the write path rather
+than being offered to the agent as suggestions — because an agent that can be talked
+out of a rule does not have that rule.
+
+| Judge | What it stops |
+|---|---|
+| Sensitive content | Side-selling, hardship, family distress, anything about another person (principle 4 / Example F3). **Redacts** rather than blocks an identifier found in prose |
+| Key vocabulary | Metadata keys that duplicate an existing key, or that nobody would ever filter on |
+| Honesty | Anything stated as booked, resolved or established that the evidence shows only as offered or attempted (principle 7, Example 8) |
+
+The honesty judge earns its place. In a live run it refused a `resolved` claim and the
+agent rewrote the entry as `open` — exactly the Example 8 failure, caught before it
+reached the store.
+
+A judge that *errors* does not block the write: this is a background job, and a flaky
+model call must not silently stop memory being built. The deterministic identifier
+strip runs afterwards, and that one cannot fail open.
+
+**Two bugs worth recording**, both from a judge being shown too little:
+- It blocked every legitimate **update**, because it saw only the current turns and so
+  demanded that this week's conversation re-establish facts that live in the entry
+  being updated. An ongoing situation could never be carried forward.
+- It blocked every **consolidated** entry, because "raised repeatedly" is licensed by
+  the record's own history, which no single conversation can evidence.
+
+Both now receive that evidence explicitly. The lesson generalises: a judge is only as
+good as the evidence base it is handed, and "the current conversation" is not the
+evidence base for a memory that spans conversations.
+
+## One write path, and why
+
+`writer.apply()` is the only thing that mutates memory. Idempotency, judging, the
+identifier strip and provenance all live there.
+
+This is not tidiness. The alternative was tried: three write paths (the agent's tools,
+the consolidation merge, the standing record), each enforcing its own subset of the
+rules — with the result that **the consolidation path never ran the judges at all.**
+The merged entries are the highest-stakes text in the store, since a merge is what
+gets injected on every turn afterwards, and they were the only unjudged writes in the
+system. Nobody decided that. It is simply what happens when a rule lives in one path
+and not another.
+
+Callers propose; the funnel decides.
+
+## Re-running the dreamer must change nothing
+
+Nightly jobs get retried, windows overlap, and a crash mid-farmer has to be resumable.
+So the job is idempotent, keyed on the **Langfuse trace id** of each turn — which the
+log reader was not capturing at all, which is why nothing could previously tell a
+re-run from a genuinely new occasion.
+
+The memory service refuses:
+- an **update** whose turns are all already recorded on that entry;
+- a **new entry** this farmer already holds — by matching headline, *and* by "these
+  turns are already recorded as this kind of entry", so a re-extraction that the model
+  happens to word differently is still caught.
+
+This is a set-membership test, not a model judgement. Asking a model whether it had
+seen a trace before would be slower, cost a call, and be able to get it wrong.
+
+**Verified**: two runs over the same fourteen-day window wrote one entry the first
+time and nothing the second, leaving a byte-identical state fingerprint.
+
+## `times_raised` counts occasions, not writes
+
+The most instructive bug in the whole system, and the reason the point above matters.
+
+`times_raised` was incremented once per write. But a write is not an occasion: two
+chunks of one conversation produced two entries, consolidation merged and summed them
+to 2, and a later update made 3 — leaving an entry claiming a farmer had raised
+something three times when they had said it once, in one session, on one day.
+
+That number is not cosmetic. It is the signal behind "he has raised this repeatedly",
+it is what the derived views in Section 3c are meant to key on, and it had been given
+to the honesty judge as evidence — so **an inflated count launders a false claim past
+the judge built to stop exactly that.**
+
+The general rule: *any* number derived from counting operations will drift under
+retries, re-runs, chunk splits and merges. Count distinct source events instead.
+
+Entries now record the conversations and turns behind them, and the service **derives**
+`times_raised` from the count of distinct conversations. A caller cannot override it.
+
+Repairing the stored data took two passes, because fixing the count exposed the next
+layer:
+- 23 entries recounted from their own conversation plus those of the fragments folded
+  into them (using the provenance trail consolidation deliberately preserves). **Six
+  were overstating** — one claiming six occasions where the record shows three.
+- Four entries whose *text* still said "has repeatedly raised" while the corrected
+  record showed a single conversation had that claim stripped. Left alone, the
+  assistant would have told a farmer they had raised something repeatedly when they
+  said it once — principle 7 violated by our own bookkeeping.
+
+Where a merge trail was broken by a later update, the recount *undercounts*. That is
+the deliberate direction: a claim of repetition should have to earn its evidence.
