@@ -25,9 +25,29 @@ Storage: Qdrant (container `amul-qdrant`, `localhost:6350`), collection
 | **2. Headline index** | 2-sentence headline per memory, with status | **Injected automatically, every turn** — top-k matched against the farmer's current question | One embedding + one vector search |
 | **3. Expanded detail** | The fuller text behind each headline | **Not injected.** Fetched only when the agent deliberately asks | Nothing, unless asked |
 
-Levels 1 and 2 are already wired in and working. Level 3 is reachable via the API
-below but **not yet exposed to the agent as a tool** — that's the next integration
-step.
+All three levels are now wired in and working. Level 3 is a tool the agent chooses
+to call — `recall_more_detail` in `agents/tools/memory_recall.py`:
+
+- It takes **a plain description** of what it wants ("the skin problem on her cow"),
+  not an entry id — passing UUIDs through a model invites hallucinated ids and leaks
+  internal identifiers for no benefit.
+- **The farmer is never a parameter**: `farmer_id` comes from signed-in deps, the
+  same way every other farmer-specific tool here works, so the model cannot ask
+  about someone else even if it tries.
+- A **prepare hook hides the tool entirely** when memory is off or no farmer is
+  resolved, so the model never sees a tool that would return nothing.
+- Bounded output, never raises, and framed as confirm-not-assert with an explicit
+  note that it only covers what happened in this chat.
+- Multi-step search falls out for free: the agent can simply call it again with a
+  different description if the first answer wasn't enough. No orchestration needed.
+
+**Verified end to end**: asked "what have I already tried for my cow's skin
+problem?", the agent called the tool unprompted (`about='the skin problem on her
+cow'`) and answered using detail that exists *only* in the expanded field
+("neem-oil wash twice… a powder you bought locally… neck and shoulders"). Separately
+confirmed the always-injected block does **not** contain that detail — 708 chars,
+headlines only — so the layering genuinely holds and expanded text isn't leaking
+into every turn.
 
 Alongside 1 and 2, the agent is also handed **what extra details exist on record for
 this farmer** (the metadata keys and their values), so it knows what it can ask for
@@ -166,8 +186,6 @@ with/without comparison auditable.
   currently stored was hand-written to test the plumbing; nothing has been extracted
   from the 2,736 real turns sitting on disk. This is the piece where the real
   uncertainty lives.
-- **Level 3 as an agent tool** — `search_expanded` works over the API, but the agent
-  has no tool for it yet, so it can't choose to dig deeper.
 - **The semantic filter tools** (`check_open_issues` and friends) — the API supports
   the filters; the agent isn't wired to call them.
 
