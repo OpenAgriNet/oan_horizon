@@ -645,6 +645,59 @@ try-a-search-then-try-another kind of search, since it's gated behind a delibera
 tool call and not sitting on the path every turn has to wait through (Section 2,
 principles 1 and 2).
 
+### Two kinds of "no longer true" — and why they're separate fields
+
+`valid_to` (above) is set **retroactively**: something changed, so the old version
+gets stamped with when it stopped being true. But some facts have a **known expiry
+from the moment they're written** — those get a separate field, `expires_at`:
+
+- A milk withdrawal period after a vet treatment ("don't pour her milk until
+  Thursday evening") — the clearest case, and the most safety-relevant.
+- A scheme or subsidy window that closes on a known date.
+- A vaccination window that has a real deadline.
+- Time-bounded advice ("add dry fodder for the next 10 days").
+- A loan eligibility result, which goes stale by its nature.
+
+**Why not reuse one field**: the two mean genuinely different things.
+`valid_to` = *"this turned out to be wrong or changed"* → it's just history.
+`expires_at` = *"this was always going to lapse on this date"* → often deserves a
+**follow-up** rather than silence ("the withdrawal period has ended — is her milk
+okay to pour now?"). Collapse them into one field and you can't tell which
+happened. So "is this current?" is two conditions: `valid_to` empty **and**
+(`expires_at` empty or still in the future).
+
+**The useful side effect**: this doubles as the trigger for the proactive
+follow-ups in Section 3b — "what's coming due in the next day" is one date-range
+filter. Which means **a reminder doesn't need its own separate store: a reminder
+*is* a memory entry with an expiry.** The withdrawal reminder, vaccination nudge,
+and scheme-deadline watch all fall out of one mechanism.
+
+**Caveat worth keeping**: an expiry date is a *prediction*, and predictions are
+wrong — deadlines get extended, a recorded treatment date can be off. So a lapsed
+entry shouldn't silently vanish; for anything safety-relevant it should become
+"needs checking," not "false." And per principle 7, "the withdrawal period ended"
+still doesn't mean the farmer actually observed it.
+
+### One free-form area for everything else, so system fields stay protected
+
+Only a small set of fields are ones the system actually filters on: `farmer_id`,
+`type`, `status`, `valid_to`, `expires_at`, `times_raised`. **Everything else the
+model wants to record goes into a single nested `metadata` object** — feed costs,
+which shifts a withdrawal period affects, its own confidence, whatever a new entry
+type turns out to need.
+
+Worth being accurate about the reason, since it isn't what you'd expect: Qdrant's
+stored fields are already schemaless, so adding a new top-level key needs no
+migration at all (unlike a SQL table). The real reason for the boundary is
+**protection**: if the model can write keys at the top level, it can collide with or
+overwrite a field the system depends on — a model deciding to write
+`status: "cow is sick"` would quietly break every "still open?" filter. Nesting
+model-generated keys under `metadata` makes that impossible.
+
+And it doesn't cost queryability: nested keys can still be filtered and indexed
+later via dotted paths (`metadata.some_key`), so if a model-invented key turns out
+to be broadly useful, it can be promoted without moving any data.
+
 ### Checking a field directly (e.g. "does this farmer have anything still open")
 
 Since real fields exist (`status`, `type`, `times_raised` — Decision 1 above), some
@@ -707,6 +760,25 @@ is only ever useful — and only ever called — for farmers who actually have e
 that type. If a farmer has none, the filter just comes back empty; nothing goes
 wrong, there's simply nothing to show. The agent picks whichever tool matches what
 the farmer's actually asking about, same as any other tool call it already makes.
+
+### Memory has to be switchable per farmer, from day one
+
+Not an afterthought — a requirement, for three separate reasons that all point the
+same way:
+- **It's the only honest way to tell whether memory helped.** Being able to replay
+  the *same* farmer's *same* real questions with memory on and off, and compare, is
+  the whole basis of the validation in `demo-plan.md`. Without a per-farmer switch,
+  there's no comparison, just a vibe.
+- **It's the safety valve for the shared-account case** (Section 3c): if the
+  background step notices an account's facts contradicting each other in a way that
+  suggests two different people, the response is to *turn that farmer's memory off*,
+  not to guess who's who.
+- **It's the rollout control.** Turning this on for a handful of farmers first, then
+  widening, is only possible if the switch exists.
+
+Implementation should keep this dead simple — a per-farmer flag the bot checks before
+doing any memory lookup at all, defaulting to off. When it's off, the bot behaves
+exactly as it does today: no lookup, no injected context, no difference whatsoever.
 
 ### Two more things worth borrowing from how Honcho organizes its memory
 

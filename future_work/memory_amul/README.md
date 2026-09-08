@@ -33,6 +33,10 @@ specifics.
   conversations before turning it on for real: replay old conversations as if memory
   had existed, compare against what actually happened, and check for both real
   improvement and any sign of feeling intrusive or annoying.
+- `api-and-integration.md` — what's actually built and running: every API path on
+  the memory service, the entry shape, how the three levels are served (1 and 2
+  injected every turn, 3 via a deliberate query), how it's wired into the bot, and
+  an explicit list of what is *not* built yet.
 - `log-findings.md` — the real cases this is all based on, found by reading 8
   heavy-repeat farmers' actual month of conversations, plus a second section of
   made-up scenarios (vet mode, loans, the farming calendar, shared phones, patterns
