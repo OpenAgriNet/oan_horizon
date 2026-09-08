@@ -101,9 +101,10 @@ The service supports more filters than the agent's tool exposes (`type`, `status
 `since`/`until`). That's deliberate: the service keeps them because they cost nothing
 and the background job and ops views use them; the agent's surface stays minimal so
 there are fewer untested paths in the model's hands.
-| `GET` | `/memory/{farmer_id}/entries?type=&status=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?" |
+| `GET` | `/memory/{farmer_id}/entries?type=&status=&metadata_key=&metadata_value=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?". `status` repeats for OR (`&status=open&status=pending`). Reports `returned`/`truncated`, because "zero means zero" survives truncation but "this is all of them" does not |
 | `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values. Identifier-shaped keys (`animal_id`, account/transaction/phone) are stripped here — see the ID policy below |
 | `GET` | `/memory/{farmer_id}/profile` | **Level 1.** The standing record. A point read by deterministic id, not a query. Returns only the populated fields |
+| `GET` | `/memory/{farmer_id}/entries/{id}/history` | How an episode's account developed, oldest first — replaced versions (via `previous_version`) and folded consolidation fragments. What makes bounding safe: condensed detail stays reachable |
 
 `farmer_id` is applied **in code** on every one of these — never passed in a filter a
 caller controls, so a query structurally cannot reach another farmer's memories.
@@ -173,22 +174,63 @@ invited exactly that confusion):
 | Fields | Timeline | Known? | Used for |
 |---|---|---|---|
 | `recorded_at` / `superseded_at` | **Record** time — when *we* wrote or replaced a record | Always | Bookkeeping and versioning only. **Never shown to the agent, never used for date filtering** — after a backfill every entry shares the same `recorded_at`, so it says nothing about when anything happened |
-| `source_ts` / `first_source_ts` | **Event** time — when the farmer actually said it, and when the thread first came up | Almost always | The only thing date filters use. `first_source_ts` is preserved across updates so "how long has this been going on" is answerable from the current version alone |
-| `expires_at` | **Real-world** validity end — but only the narrow, knowable case | Rarely | Expiry and `GET /due`. Not a "when was this true" filter |
+| `source_ts` / `first_source_ts` | **Event** time — when the farmer actually said it, and when the thread first came up | Almost always | **Shown to the agent, never filtered on.** `first_source_ts` survives updates, so "how long has this been going on" is answerable from the current version alone |
+| `expires_at` | A known, actionable end date where the conversation gave one | Rarely | Shown to the agent, and `GET /due`, where the date IS the question |
 
-**Real-world "true since / true until" is deliberately NOT a filterable field.** It's
-unknown for most facts, so filtering on it would silently drop nearly everything. It
-stays in the text, where the uncertainty can be stated honestly ("started about ten
-days ago") rather than flattened into a date that looks precise.
+### No date is ever used to hide a memory
 
-**Undated entries are always included in a date-filtered search**, flagged "date not
-recorded" — an invisible relevant memory is a worse failure than an imprecise date.
+**Amended 2026-09-08, after getting this wrong three separate times.** Recorded at
+length because it looks like a missing feature rather than a decision:
+
+- `since`/`until` range filters were built speculatively and **never called by
+  anything**. Dead code on this axis.
+- `valid_from`/`valid_to` were record time wearing the name of real-world validity,
+  and had to be renamed `recorded_at`/`superseded_at`.
+- `expires_at` was folded into `only_current`, which silently hid an **open** booking
+  whose scheme deadline had passed — the case most worth surfacing, not least.
+
+Three failures on one axis is evidence the abstraction was wrong, not that the
+implementations were unlucky. Why it keeps failing:
+
+- A date cannot tell you whether something is **resolved**. `status` can.
+- `expires_at` is inferred from a conversation by a model, so it is a guess wearing
+  the costume of a precise fact — and we were letting that guess delete things.
+- **Filtering is silent and destructive.** An entry a filter removes produces no
+  signal at all, so the assistant cannot reason about what it never saw. Showing the
+  date instead lets it reason out loud — "that withdrawal period ended last week" —
+  and say so to the farmer.
+
+So dates are stored, indexed, and **shown**, framed for the model to judge: an end
+date that has passed means that deadline or withdrawal period is over, **not** that
+the matter was settled. A request still marked open is still open.
+
+The one thing still filtered is `superseded_at`, and that is deliberately **not** a
+date comparison — it is a version-state check (set or unset). Nothing is compared
+against the clock.
+
+### One date format, everywhere
+
+`01-September-2026`, from a single function per repo
+(`dreamer/dates.py`, `app/services/memory_dates.py`, asserted by test to agree).
+Bare ISO is ambiguous read aloud and invites day/month confusion when spoken back in
+Gujarati; twenty independent `[:10]` slices could each drift. Undated entries render
+one explicit marker, never a blank that reads as a missing field.
 
 ### Only the latest version is ever searched at runtime
 
-`only_current` defaults on and the recall tool hardcodes it, so a superseded version
-(e.g. `times_raised: 4` after it became 5) is never returned to the agent. Old
-versions are reachable only by explicitly asking for history. Verified.
+### Only the latest version is ever searched at runtime
+
+`only_current` defaults on and both agent tools hardcode it, so a superseded version
+is never returned. This survived the removal of date filtering precisely because it
+is a **state** check rather than a date comparison — verified by test on all three
+read paths (headline search, expanded search, exact listing), and folded
+consolidation fragments are excluded the same way.
+
+History is not lost, and is now **walkable**: an update records `previous_version`,
+so `GET /memory/{id}/entries/{entry_id}/history` returns how an account developed,
+oldest first, following both replaced versions and folded fragments. A current entry
+whose account has been rewritten says so (`earlier_versions_available`), because a
+reader who cannot tell whether they have the whole picture will assume they do.
 
 ### Search is semantic (dense) only — hybrid was built and backed out
 
@@ -397,3 +439,59 @@ the text, not by a number — or, better, avoided entirely by using a structured
 where the question is actually structured (see Section 6 of `memory-overview.md` on
 field filtering). A filtered lookup has no false-positive problem at all: no entry
 with `status=open` means zero rows, definitively, not a weak vector match.
+
+
+---
+
+## The live agent's two memory tools, and why both exist
+
+| Tool | For | Guarantee |
+|---|---|---|
+| `recall_more_detail` | A fuzzy question about one situation — "the skin problem on her cow" | Best matches, ranked. Says nothing about completeness |
+| `list_remembered_items` | A structured question about state — "is anything still open" | **Zero rows means definitively zero**, and it says so in words |
+
+They are not alternatives. The second exists because of a measurement: a query about
+a treatment nothing on record resembles scored **0.852** while genuine recalls ranged
+0.768–0.875, so from a score alone "no strong match" and "nothing on record" are
+indistinguishable. Asked for pending bookings, a search returns whatever is closest
+and the agent cannot tell whether that is all of them, some, or none. A field filter
+can, so an empty result is stated as complete — otherwise the agent hedges, or retries
+with a search.
+
+`list_remembered_items` defaults to `state="unresolved"`, which is open OR pending in
+one query rather than two plus a union the model has to compute. An unknown state or
+category is rejected without troubling the service.
+
+Both share the same safety shape: **the farmer is never a parameter** (it comes from
+signed-in deps), both are hidden when memory is off or no farmer is resolved, neither
+raises, both are bounded, and both report truncation.
+
+## Nothing the agent pulls is cut mid-text
+
+The recall tool used to slice its output at a character count. That halves a sentence
+and says nothing about what was removed — and it was happening on real data, where
+three entries came to 1532 characters against a 1500-character cap. A half-stated
+memory is worse than one fewer memory.
+
+Bounds now sit in two places, neither of them a character slice:
+
+- **Write time, by re-synthesis.** An account past `MEMORY_EXPANDED_SOFT_LIMIT`
+  (1500 chars) is condensed by a model — off any live turn, where there is no latency
+  budget and something can actually decide what earns its place. Nothing is lost:
+  every earlier version is kept and walkable, so what a condensation compresses stays
+  recoverable.
+- **Read time, by dropping whole entries** and saying how many were dropped.
+
+The injected Layer-1/2 block is still bounded (`MEMORY_MAX_CHARS`, 1800 — raised from
+1200 when dates were added to each line), but it now drops whole lines, refuses to
+leave a section header with nothing under it, and states that something was left out.
+
+## Tests
+
+`amul-memory/run_tests.sh` — 71 stdlib-unittest tests, no model calls. Unit tests run
+anywhere; integration tests skip when the service is down. They pin the behaviours
+that regress **silently**: the embedding document/query convention (break it and
+search still works, it just stops meaning anything), identifier stripping,
+trace-level idempotency, `times_raised` counting occasions rather than writes, exact
+listing keeping lapsed-but-open entries, cross-farmer isolation, and memory-off
+returning nothing.
