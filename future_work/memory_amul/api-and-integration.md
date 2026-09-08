@@ -116,6 +116,7 @@ caller controls, so a query structurally cannot reach another farmer's memories.
 | `PATCH` | `/memory/{farmer_id}/entries/{id}` | Update = stamp the old version `superseded_at` **and** write a new one, so history is preserved. Accepts `source_ts` so an update advances *last mentioned* while `first_source_ts` keeps the start |
 | `PUT` | `/memory/{farmer_id}/profile` | Replace the standing record. Body: `{fields: {...}, source_ts?}`. Unknown field names are ignored and reported back, so the schema cannot drift; the previous version is kept as history |
 | `POST` | `/keys/doc` | Record what a newly invented key means. Body: `{key, description, example_values}` |
+| `POST` | `/memory/{farmer_id}/entries/{id}/fold` | Retire a fragment into a consolidated entry. Body: `{merged_into, reason}`. Stamps `superseded_at` + `merged_into` **without** writing a replacement — PATCH is wrong for consolidation because it would leave a live entry per fragment. Nothing is deleted: a wrong merge has to stay diagnosable |
 
 ### On/off per farmer
 

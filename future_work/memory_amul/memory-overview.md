@@ -943,3 +943,76 @@ Priorities are set, the technology decision is made (Section 5), and Section 6 c
 how it actually gets built. What's most useful next: (1) sanity-checking the "Medium
 priority" bucket in Section 4 — that's the list that would actually get built first,
 and (2) the open questions in Section 7, especially the transparency one.
+
+---
+
+## Consolidation — the dream-time pass that makes over-splitting safe
+
+Added 2026-09-08, after the first run against real logs exposed the problem.
+
+The per-conversation match was originally built as though it ran during a live turn:
+three candidates, filtered to a single entry type, one call, default to "new". It runs
+nightly, with no latency budget, and it is the step where quality matters most —
+because fragmentation corrupts everything downstream of it.
+
+**What it actually produced.** On one real farmer, one grievance — the society not
+registering his calves for the rearing subsidy — was stored as **six separate live
+entries**, each with `times_raised = 1`. That makes "he has raised this repeatedly"
+undetectable, which is the single most valuable thing memory could have surfaced here
+(Section 4, Examples 2 and 7). It also filled top-k with near-identical entries,
+crowding out everything else the farmer had said.
+
+### Why the cheap version failed
+
+- **The type filter made the most common duplication impossible to detect.** Candidates
+  were only compared against existing entries of the *same* type. But the usual real
+  pattern is one situation recorded as a `complaint` one week and a `tracker` the next.
+  Those can never be compared, so they can never be merged.
+- **Ranking by score was close to arbitrary.** Measured: everything in one farmer's
+  store scores 0.74–0.88 whether or not it is the same situation. Taking the top 3 of
+  that ordering is nearly a coin toss.
+- **"Default to new" had no counterweight.** The default itself is right — the match
+  step sees one conversation, and a wrong merge there is silent and permanent — but
+  with nothing to correct over-splitting later, "cautious" just means "fragmented".
+
+### What replaces it
+
+Three passes, all affordable because none of this touches a live turn:
+
+1. **Wide candidate retrieval.** No type filter. Both the headline and expanded
+   vectors, searched across several phrasings of the new entry, unioned.
+2. **Model reranking.** A model that can read the candidates decides which are
+   plausibly the same *situation* — not which are topically closest. Returning nothing
+   is a valid answer.
+3. **A whole-store consolidation pass**, run after a farmer's chunks and *before* the
+   standing record, so Layer 1 is derived from whole situations rather than fragments.
+   It clusters every current entry into situations, synthesises one merged episode per
+   group, and folds the fragments into it.
+
+**The division of labour is the design.** The per-chunk match still defaults to "new".
+Over-splitting is now recoverable, which is what makes that caution safe rather than
+merely convenient — the online step is allowed to be wrong in the direction that can
+be fixed later.
+
+### Merging preserves the thread, and stays auditable
+
+- The **longest-standing fragment is kept**, so `first_source_ts` survives and the
+  merged episode doesn't look like it started today.
+- `times_raised` becomes the number of separate occasions the situation came up. This
+  is the whole point: it is what makes "raised repeatedly" detectable at all.
+- `source_ts` advances to the most recent fragment, so the span is visible.
+- Fragments are **folded, not deleted** (`POST /entries/{id}/fold`), stamped with
+  `merged_into` and the reason. Runtime search returns only the consolidated entry,
+  but the trail back is intact — a wrong merge must stay diagnosable.
+- Low-confidence groups are skipped rather than merged.
+
+### Measured result
+
+On that farmer: **14 current entries → 8.** The grievance now reads "repeatedly raised
+concerns since August 2026", `raised 6x`, with the ₹15,000 misconception, the
+assistant's correction of it, and the advice given all preserved in one chronological
+account — none of which any single fragment contained.
+
+Retrieval improved too, which was not the goal but follows: **recall@1 went from 8/9 to
+9/9** on a labelled set of nine recall queries, with recall@3 at 9/9 throughout. Fewer,
+truer episodes are easier to retrieve than many overlapping ones.
