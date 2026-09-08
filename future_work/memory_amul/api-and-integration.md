@@ -40,6 +40,21 @@ to call — `recall_more_detail` in `agents/tools/memory_recall.py`:
   note that it only covers what happened in this chat.
 - Multi-step search falls out for free: the agent can simply call it again with a
   different description if the first answer wasn't enough. No orchestration needed.
+- **Signature is deliberately small**: `recall_more_detail(about, detail_key,
+  detail_value)`. Date-range parameters were built and then removed — going back
+  through the real log findings, no farmer ever asked what they'd *told the bot* in a
+  given period (the "last 7 days" questions are about live milk data, not memory),
+  and the one case that would justify them (comparing against the same season last
+  year) belongs to a scenario that isn't built. Dates are still *visible* on every
+  result, which is what actually does the work: the agent could answer "how long has
+  this been going on" with no filter at all, just by reading them.
+- `detail_key`/`detail_value` filter on the **dreamer-invented keys** — the mechanism
+  agreed in `memory-overview.md`: the dreamer decides which keys exist, those keys
+  become filterable, and the agent filters on top of them. Filters on system fields
+  (`type`, `status`) were briefly added and reverted — nothing has demonstrated the
+  agent needs them, and in testing it answered a listing question ("which schemes
+  have I not been paid for") correctly from the injected Layer 2 context *without
+  calling the tool at all*.
 
 **Verified end to end**: asked "what have I already tried for my cow's skin
 problem?", the agent called the tool unprompted (`about='the skin problem on her
@@ -61,8 +76,128 @@ rather than having to guess. Farmer-scoped, cheap, injected every turn.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/memory/{farmer_id}/search` | **Level 2.** Quick search over *headline* vectors only. Body: `{query, limit, type?, status?, only_current?}` |
-| `POST` | `/memory/{farmer_id}/search_expanded` | **Level 3.** Deeper search over *expanded* vectors. Same body. Meant for a deliberate tool call, may be multi-step |
+| `POST` | `/memory/{farmer_id}/search` | **Level 2.** Semantic search over *headline* vectors only. Body: `{query, limit, only_current?, type?, status?, metadata_key?, metadata_value?, since?, until?, include_undated?}` |
+| `POST` | `/memory/{farmer_id}/search_expanded` | **Level 3.** Same, over *expanded* vectors. What the recall tool calls |
+
+The service supports more filters than the agent's tool exposes (`type`, `status`,
+`since`/`until`). That's deliberate: the service keeps them because they cost nothing
+and the background job and ops views use them; the agent's surface stays minimal so
+there are fewer untested paths in the model's hands.
+| `GET` | `/memory/{farmer_id}/entries?type=&status=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?" |
+| `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values |
+
+`farmer_id` is applied **in code** on every one of these — never passed in a filter a
+caller controls, so a query structurally cannot reach another farmer's memories.
+
+### Writing (the background job's surface)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/memory/{farmer_id}/entries` | Write a new entry. Never overwrites |
+| `PATCH` | `/memory/{farmer_id}/entries/{id}` | Update = close out the old version (`valid_to` set) **and** write a new one, so history is preserved |
+| `POST` | `/keys/doc` | Record what a newly invented key means. Body: `{key, description, example_values}` |
+
+### On/off per farmer
+
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/memory/{farmer_id}/settings` | `{"memory_enabled": false, "note": "..."}` |
+| `GET` | `/memory/{farmer_id}/settings` | Check one farmer |
+| `GET` | `/settings` | Everyone with an explicit flag, and who's switched off |
+
+Stored in Qdrant next to that farmer's own memory — one source of truth, no separate
+flag store. **Default is on** (within the bot's global `MEMORY_ENABLED` switch), so
+the flag exists mainly to switch specific farmers *off*. Enforced in the service: a
+farmer who's off gets empty results from every read path, whatever was asked. A
+*failed* flag lookup also returns nothing, so the failure mode is never "memory
+leaked for someone disabled."
+
+### Ops / review (NOT for the agent)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/keys` | Every metadata key in use across **all** farmers — counts, sample values, which are undocumented |
+| `DELETE` | `/keys/{key}` | Drop a key from every entry that carries it, plus its doc |
+| `GET` | `/due?within_hours=24` | Entries lapsing soon — the trigger for proactive follow-ups |
+| `GET` | `/health` | Collection status, entry count, embedding model |
+
+`GET /keys` crosses farmer boundaries (its sample values come from other people's
+entries), so it must never be handed to the agent — that's what
+`/memory/{farmer_id}/keys` is for.
+
+---
+
+## Entry shape
+
+**System fields** (what the service filters on — stable, don't let the model write
+these): `farmer_id`, `type` (`profile` | `complaint` | `booking` | `health_note` |
+`tracker` | `derived`), `status` (`open` | `resolved` | `pending` | `n/a`),
+`times_raised`, `headline`, `expanded`, `valid_from`, `valid_to`, `expires_at`,
+`source_session_id` / `source_ts` (a pointer back to the conversation, not a copy),
+`built_from` (entry ids a derived conclusion came from).
+
+**`metadata`** — one nested object for everything else. The model invents keys here
+freely; they can never collide with a system field. Still filterable later via
+`metadata.some_key`.
+
+### Three timelines, kept deliberately separate
+
+Conflating these is the easiest way to get memory wrong, so the field names now say
+which is which (an earlier version called record time `valid_from`/`valid_to`, which
+invited exactly that confusion):
+
+| Fields | Timeline | Known? | Used for |
+|---|---|---|---|
+| `recorded_at` / `superseded_at` | **Record** time — when *we* wrote or replaced a record | Always | Bookkeeping and versioning only. **Never shown to the agent, never used for date filtering** — after a backfill every entry shares the same `recorded_at`, so it says nothing about when anything happened |
+| `source_ts` / `first_source_ts` | **Event** time — when the farmer actually said it, and when the thread first came up | Almost always | The only thing date filters use. `first_source_ts` is preserved across updates so "how long has this been going on" is answerable from the current version alone |
+| `expires_at` | **Real-world** validity end — but only the narrow, knowable case | Rarely | Expiry and `GET /due`. Not a "when was this true" filter |
+
+**Real-world "true since / true until" is deliberately NOT a filterable field.** It's
+unknown for most facts, so filtering on it would silently drop nearly everything. It
+stays in the text, where the uncertainty can be stated honestly ("started about ten
+days ago") rather than flattened into a date that looks precise.
+
+**Undated entries are always included in a date-filtered search**, flagged "date not
+recorded" — an invisible relevant memory is a worse failure than an imprecise date.
+
+### Only the latest version is ever searched at runtime
+
+`only_current` defaults on and the recall tool hardcodes it, so a superseded version
+(e.g. `times_raised: 4` after it became 5) is never returned to the agent. Old
+versions are reachable only by explicitly asking for history. Verified.
+
+### Search is semantic (dense) only — hybrid was built and backed out
+
+A tunable dense+keyword hybrid was built, measured, and **deliberately removed**.
+Worth recording why, so it isn't rebuilt the same way:
+
+- The keyword side needs real inverse-document-frequency weighting to be useful. With
+  only a stopword list, moderately common words stay over-weighted, so a paraphrase
+  sharing filler words scored as a strong literal match.
+- Getting the score scales wrong made it actively worse than plain semantic search:
+  normalising each side *within its own result set* meant a score depended on
+  whatever else happened to match — a lone strong keyword hit normalised to 0.00, a
+  lone weak one to 1.00. Fixing that (absolute scales: raw cosine for dense, fraction
+  of query keyword weight matched for sparse) worked, but the IDF gap remained.
+
+Sparse vectors are still written on every entry, so this can be switched back on
+without re-indexing — but it shouldn't return until IDF is done and measured.
+
+---
+
+## Memory service API
+
+### Reading (all farmer-scoped, all respect the on/off flag)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/memory/{farmer_id}/search` | **Level 2.** Semantic search over *headline* vectors only. Body: `{query, limit, only_current?, type?, status?, metadata_key?, metadata_value?, since?, until?, include_undated?}` |
+| `POST` | `/memory/{farmer_id}/search_expanded` | **Level 3.** Same, over *expanded* vectors. What the recall tool calls |
+
+The service supports more filters than the agent's tool exposes (`type`, `status`,
+`since`/`until`). That's deliberate: the service keeps them because they cost nothing
+and the background job and ops views use them; the agent's surface stays minimal so
+there are fewer untested paths in the model's hands.
 | `GET` | `/memory/{farmer_id}/entries?type=&status=&only_current=&limit=` | Direct field filter, **no vector search** — e.g. "anything still open?" |
 | `GET` | `/memory/{farmer_id}/keys` | **Agent-safe.** Which metadata keys exist for *this* farmer, their descriptions, and this farmer's own values |
 
@@ -229,6 +364,16 @@ with/without comparison auditable.
   generic advice).
 - Model-invented keys are immediately filterable, visible in `GET /keys` (with
   undocumented ones flagged), and removable via `DELETE /keys/{key}`.
+
+## Deliberately removed (so it isn't rebuilt by accident)
+
+- **Hybrid dense+keyword search** — built, measured, removed. Needs real IDF first.
+  See the search section above.
+- **Date-range parameters on the agent's tool** — no observed use case; dates stay
+  visible on results instead, which covered the actual need.
+- **`type`/`status` parameters on the agent's tool** — filtering rides on the
+  dreamer-invented keys instead, per the agreed design. The service still supports
+  them for background/ops use.
 
 ## What's not built yet
 
