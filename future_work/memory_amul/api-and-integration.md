@@ -120,11 +120,61 @@ these): `farmer_id`, `type` (`profile` | `complaint` | `booking` | `health_note`
 freely; they can never collide with a system field. Still filterable later via
 `metadata.some_key`.
 
-**Two kinds of "no longer true"**:
-- `valid_to` — set retroactively when something changed. History.
-- `expires_at` — known in advance ("don't pour her milk until Thursday"). A lapsed
-  entry stops counting as current, and `GET /due` finds them before they lapse, which
-  is how proactive follow-ups work without a separate reminder store.
+### Three timelines, kept deliberately separate
+
+Conflating these is the easiest way to get memory wrong, so the field names now say
+which is which (an earlier version called record time `valid_from`/`valid_to`, which
+invited exactly that confusion):
+
+| Fields | Timeline | Known? | Used for |
+|---|---|---|---|
+| `recorded_at` / `superseded_at` | **Record** time — when *we* wrote or replaced a record | Always | Bookkeeping and versioning only. **Never shown to the agent, never used for date filtering** — after a backfill every entry shares the same `recorded_at`, so it says nothing about when anything happened |
+| `source_ts` / `first_source_ts` | **Event** time — when the farmer actually said it, and when the thread first came up | Almost always | The only thing date filters use. `first_source_ts` is preserved across updates so "how long has this been going on" is answerable from the current version alone |
+| `expires_at` | **Real-world** validity end — but only the narrow, knowable case | Rarely | Expiry and `GET /due`. Not a "when was this true" filter |
+
+**Real-world "true since / true until" is deliberately NOT a filterable field.** It's
+unknown for most facts, so filtering on it would silently drop nearly everything. It
+stays in the text, where the uncertainty can be stated honestly ("started about ten
+days ago") rather than flattened into a date that looks precise.
+
+**Undated entries are always included in a date-filtered search**, flagged "date not
+recorded" — an invisible relevant memory is a worse failure than an imprecise date.
+
+### Only the latest version is ever searched at runtime
+
+`only_current` defaults on and the recall tool hardcodes it, so a superseded version
+(e.g. `times_raised: 4` after it became 5) is never returned to the agent. Old
+versions are reachable only by explicitly asking for history. Verified.
+
+### Hybrid search: dense + sparse, tunable
+
+Every entry carries four vectors: dense `headline`/`expanded` (meaning, via Marqo's
+multilingual model) and sparse `headline_kw`/`expanded_kw` (literal word overlap).
+Searches run both and blend them with `MEMORY_HYBRID_ALPHA` (default `0.6` dense /
+`0.4` keyword — the same knob shape Amul's Marqo config already exposes).
+
+Both sides are scored on **absolute** scales, not normalised within the result set:
+dense uses raw cosine; sparse uses the *fraction of the query's own keyword weight
+that matched*. Two bugs came from getting this wrong first time — within-set
+normalisation turned a lone strong keyword hit into 0.00 and a weak one into a
+perfect 1.00, because the score depended on whatever else happened to match.
+
+Measured behaviour (α=0.6):
+
+| Query | Top hit | dense | keyword |
+|---|---|---|---|
+| "neem oil" (exact term in the text) | the skin-problem entry | 0.82 | **1.00** |
+| "1200 rupees" (exact number) | the deduction entry | 0.83 | **1.00** |
+| "the animal is unwell and losing hair" (paraphrase) | correct entry ranked, keyword near zero | 0.80 | 0.00 |
+| Gujarati paraphrase | the skin-problem entry | 0.81 | 0.00 |
+
+So exact terms and numbers are caught by the keyword side, paraphrases and Gujarati
+by the dense side — which is the point of having both.
+
+**Known gap**: the sparse side uses a stopword list, not real inverse-document-
+frequency weighting. Without corpus statistics, moderately common words are still
+over-weighted relative to rare ones. Worth closing before production; adequate for
+testing.
 
 ---
 
