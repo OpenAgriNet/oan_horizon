@@ -645,6 +645,69 @@ try-a-search-then-try-another kind of search, since it's gated behind a delibera
 tool call and not sitting on the path every turn has to wait through (Section 2,
 principles 1 and 2).
 
+### Checking a field directly (e.g. "does this farmer have anything still open")
+
+Since real fields exist (`status`, `type`, `times_raised` — Decision 1 above), some
+questions don't need a search at all, just a direct filter: "give me every entry for
+this farmer where `status = open`." Instant, exact, no interpretation needed — and
+crucially, this same kind of check is what lets the analytics idea in Section 3c
+work at all (checking this across *many* farmers at once — "how many currently have
+an open complaint of this type" — is one filter, not hundreds of individual reads).
+This is precisely the thing Honcho's always-free-text storage can't do (Section 5) —
+without a real field, "is this still open" has no answer except reading and
+re-interpreting a sentence every time, which doesn't hold up once you're checking
+more than one farmer at a time.
+
+**How the live agent knows to use this**: no different from any other tool it
+already has. Define it as a tool — say, `check_open_issues` — with a plain
+description of what it's for ("check whether this farmer has an unresolved issue
+raised before"), and the model calls it when the conversation calls for it, the same
+way it already decides when to call `get_farmer_profile` or `book_ai_call` today.
+Nothing new about *how* tools get exposed to the agent — just one more tool on the
+existing list. For the common case, this doesn't even need to be its own decision —
+Layer 2's automatic per-turn search can just default to only ever surfacing
+`status: open` entries, since that's usually what's relevant; an explicit tool call
+is for the narrower, more specific checks beyond that default.
+
+**The background reflection ("dreaming") step uses the exact same filtering** — for
+its own two jobs: checking whether a farmer already has an *open* entry of a given
+type before deciding new-vs-update (Decision 2 above), and building the
+across-farmers analytics view (Section 3c). Same mechanism, used internally rather
+than exposed to a live conversation.
+
+**A safety rule worth building in at the code level, not just as an instruction**:
+whatever the actual query looks like — a simple filter, or something more elaborate
+the dreaming step suggests based on a farmer's specific history — the tool that
+executes it should always wrap it with `farmer_id = <this caller's id>` **in the
+code itself**, not as something the model has to remember to include. That way,
+however a query gets constructed, it's structurally impossible for it to reach past
+one farmer's own memories — a hard guarantee, not a rule that depends on the model
+following instructions correctly every time.
+
+### Different farmers can genuinely have different fields — and a tool per entry type
+
+Qdrant doesn't force every entry into one rigid, fixed set of columns — the tagged
+data on each entry is flexible per entry, not a strict spreadsheet every farmer's
+data must fit identically. So a `complaint`-type entry can carry `status` and
+`times_raised`, a `booking`-type entry can carry `booking_type` and `confirmed`, a
+`loan`-type entry can carry `reason_code` and `decided_date` — each type has whatever
+fields actually make sense for it, and a given farmer's memory only ever contains the
+types actually relevant to *their* history. A farmer who's never touched the loan
+feature simply has zero `loan`-type entries — nothing forces every farmer's memory
+into the same shape, and nothing breaks from most fields being absent for most
+people. This quietly gets us the same "different farmers, different relevant facts"
+outcome Graphiti's structured types were offering (Section 5), without needing a
+rigid schema imposed from outside.
+
+Following directly from that: define **one small, fast filter tool per entry type**
+— `check_open_issues` (`type: complaint, status: open`), `check_pending_vaccinations`
+(`type: vaccination, completed: false`), `check_loan_status` (`type: loan`), and so
+on. Each is instant and exact, same mechanism as the single example above, and each
+is only ever useful — and only ever called — for farmers who actually have entries of
+that type. If a farmer has none, the filter just comes back empty; nothing goes
+wrong, there's simply nothing to show. The agent picks whichever tool matches what
+the farmer's actually asking about, same as any other tool call it already makes.
+
 ### Two more things worth borrowing from how Honcho organizes its memory
 
 Neither of these needs Honcho itself — just the ideas, built cheaply on the same
