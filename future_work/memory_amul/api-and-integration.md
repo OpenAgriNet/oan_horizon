@@ -152,18 +152,47 @@ entries), so it must never be handed to the agent — that's what
 ## Entry shape
 
 **System fields** (what the service filters on — stable, don't let the model write
-these): `farmer_id`, `type` (`profile` | `complaint` | `booking` | `health_note` |
-`tracker` | `derived`, plus two internal-only types the read paths always exclude:
-`settings` and `profile_record` — note `profile_record` (the Level-1 standing record)
-is deliberately **not** the same as `profile`, which is an ordinary remembered fact),
-`status` (`open` | `resolved` | `pending` | `n/a`),
+these): `farmer_id`, `type`, `status` (`open` | `resolved` | `pending` | `n/a`),
 `times_raised`, `headline`, `expanded`, `recorded_at`, `superseded_at`, `expires_at`,
-`source_session_id` / `source_ts` (a pointer back to the conversation, not a copy),
-`built_from` (entry ids a derived conclusion came from).
+`previous_version`, `source_session_id` / `source_ts` / `source_sessions` /
+`source_traces` (pointers back to the conversations, not copies of them).
 
-**`metadata`** — one nested object for everything else. The model invents keys here
-freely; they can never collide with a system field. Still filterable later via
-`metadata.some_key`.
+### Two different vocabularies, and only one of them is ours
+
+This distinction got blurred once and is worth stating plainly, because the two
+behave in opposite ways.
+
+**Entry `type` is a fixed enum in our code** — the five categories from the log study
+(Section 4 / Decision 1): `profile`, `complaint`, `booking`, `health_note`, `tracker`.
+Plus two internal-only types every read path excludes: `settings`, and
+`profile_record` — note that `profile_record` (the Level-1 standing record) is
+deliberately **not** the same as `profile`, which is an ordinary remembered fact.
+
+The enum is small and ours on purpose: `status` semantics and every structured filter
+hang off it, so a model must not be able to extend it at will.
+
+> A sixth value, `derived`, plus a `built_from` field, were **removed on 2026-09-09**.
+> They were added speculatively, never decided, and never used — zero `derived`
+> entries in the store, zero entries with a non-empty `built_from`, and the extraction
+> prompt never offered `derived` to the model. Section 3c *does* describe cross-entry
+> conclusions, but as **Amul-facing** outputs (aggregated recurring-problem summaries
+> across farmers, content-gap tagging, the glossary queue) — not as entries inside one
+> farmer's memory. A declared field nobody uses invites a plan nobody agreed to, which
+> is precisely what happened: it resurfaced later as though it were a commitment.
+
+**`metadata` keys are the model's, and open-ended.** One nested object, so an invented
+key can never collide with a system field. The model coins keys as it finds them
+(`severity`, `scheme`, `animal_id`), reuse-first: it is shown the existing keys and
+their meanings and told to reuse before inventing, because two keys meaning the same
+thing make both useless for filtering. Anything it coins it documents via
+`POST /keys/doc`.
+
+This is what makes per-farmer detail possible, and it stays controllable after the
+fact rather than by a gate up front: `GET /keys` is the ops inventory (with usage
+counts and which are undocumented), `POST /keys/doc` documents or redefines one, and
+`DELETE /keys/{key}` removes a key from the vocabulary **and** strips it from the
+entries carrying it. So the vocabulary can be pruned later without blocking the model
+now — which is the whole reason no human approval sits in the write path.
 
 ### Three timelines, kept deliberately separate
 
