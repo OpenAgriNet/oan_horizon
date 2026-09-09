@@ -1,3 +1,5 @@
+> Historical evidence and motivating examples. Category names in this study are descriptions of the earlier experiments, not requirements for the current design. See [the current overview](memory-overview.md), reviewed 9 September 2026.
+
 # Real memory-value cases, found in Amul's actual logs
 
 Where this came from, and what it means for the plan in `memory-overview.md` and

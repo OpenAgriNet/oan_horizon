@@ -1,110 +1,105 @@
-# Amul memory — how we'd test it before shipping
+# Backtesting the revised memory design
 
-Goal: before turning on any memory design for real, check it against Amul's real past
-conversations — does it actually make answers better, and just as important, does it
-**never make an answer worse or come across as annoying/creepy**? This is a replay
-against history, not a live test with real farmers — see "Limitations" below for what
-that does and doesn't tell us.
+The first 20-farmer paired replay was run on 9 September 2026. See
+[the backtest review](backtest-review-2026-09-09.md) for outcomes, artifacts and limits.
+The remaining sections describe the broader evaluation needed before wider use.
 
-## Where the data comes from
+## Compare the same bot, with and without memory
 
-- **Source**: Amul's production Langfuse (the system that logs every conversation) —
-  keys live in `oan-brain/oan_creds/.langfuse_keys`. Confirm exactly where Amul's own
-  keys are kept before starting.
-- **What we're looking at**: a **farmer** (by phone number), not a single
-  conversation — we need farmers with **multiple calls/chats spread across different
-  days**, since a memory system has nothing to draw on otherwise. Because Amul's chat
-  history today only lasts 2 hours, most "repeat" conversations close together are
-  really just testing that short-term memory, not the new system — we specifically
-  need farmers active on *different days*, not just multiple times in one sitting.
-- If we test the vet-facing mode too, pull that group of users separately — different
-  identities (vets, not farmers), different shape of memory, shouldn't be mixed into
-  the same sample.
-- For each farmer: pull every message and reply, in order, with timestamps, which
-  mode they were in, and what tools/lookups the bot used. This part is fiddly — the
-  logging system has some known quirks (documented in
-  `oan-brain/knowledge/langfuse-api-gotchas.md`) — budget real time for it.
-- **Not yet resolved — a real privacy question, not a formality**: this is real farmer
-  phone numbers and real conversation content, including health/financial details.
-  Needs an actual decision on how to handle that (e.g. anonymizing before it leaves
-  the logging system) before any of it goes into a local testing setup — don't assume
-  this is fine by default.
+For each held-out question, run the same model, prompt, and live-tool fixtures twice:
+memory off and memory on. Historical production replies are useful additional context,
+not the sole control, because the bot itself has changed since those replies.
 
-## How the test works — replaying history in order
+Build each farmer's memory only from turns before that question's cutoff. Process
+turns in chronological order, including interleaved sessions; no trace after the memory cutoff may
+enter extraction, consolidation or profile evidence. Replay operational tool results
+as they existed for the held-out question, never from after that question. `--days`
+is now anchored to `--until` when supplied. Use separate test settings and an isolated
+collection, never turn live farmer flags on/off to implement this comparison.
 
-Reuse the shape of testing pipeline the org already has for comparing chat models
-(`oan-evaluation`) rather than building something new from scratch.
+## Cover ordinary conversations as well as memorable cases
 
-For each farmer, walk through their real conversations **in the order they actually
-happened**:
+Include useful ongoing situations, explicit preferences, ambiguous animal references,
+multiple issues in one turn, repeated sessions, different wording/languages, incomplete
+bookings, sensitive admissions, routine fully answered questions, and irrelevant
+questions where memory should not be mentioned. Include farmers with little/no memory
+and different metadata vocabularies. Log-study examples are starting cases, not the
+whole test set and not a mandatory classification scheme.
 
-1. **Before** each conversation, ask the memory system being tested what it would
-   bring up — the quick facts, plus anything deeper it's noticed.
-2. **Generate two versions** of each real historical reply:
-   - **Without memory** — the real historical reply already exists in the logs, so we
-     can just use that directly as a reference point rather than re-generating it
-     (the model has changed since then anyway, so an exact re-run isn't really the
-     point).
-   - **With memory** — the same conversation, but with the memory context added in,
-     run through the actual bot (not a stripped-down test version), so any behavior
-     changes from having memory present are real.
-3. **After** each conversation, feed it into the memory system so it updates —
-   exactly as if memory had existed the whole time, so by a farmer's 5th
-   conversation in the test, the memory system has genuinely built up everything from
-   their first 4, not made-up data.
+## Exercise the actual agent path
 
-Run this once per version of the design being tested (e.g. different combinations of
-what gets remembered, or different retrieval approaches) and produce one comparison
-table per version, so they can be judged side by side.
+Inject the configured standing record and relevant headlines. Let the normal reply
+agent choose search/list/read tools; do not hand it arbitrary extra detail. Record:
 
-## Scoring — what "doesn't regress, isn't annoying" actually means
+- Which context and farmer-specific keys reached the prompt, including omissions.
+- Queries, optional filters, selected references, list cursors and whole-chunk next pages, and
+  whether broader search recovered a relevant untagged memory.
+- Whether the reply preserved uncertainty and avoided irrelevant or intrusive recall.
+- Every write decision, selected supporting turns, exact trace/session provenance,
+  repeated-run duplicates, incorrect merges, and failures reported for retry.
+- Waiting time, timeout behavior, extra requests, and prompt/output size.
 
-Have an AI compare the two replies side by side (with a spot-check by an actual
-person too, see below), scoring on:
+Test disabling separately: global off, default-on user setting, explicit user off,
+and unavailable settings. Background learning must not flip a reply-use flag.
 
-1. **Got something wrong that the old version got right** — especially trusting
-   stale memory over what the farmer is saying right now (e.g. herd changed, animal
-   was sold, and memory says otherwise). This is a hard stop — any of this blocks
-   shipping that version.
-2. **Actually used the memory well** — skipped a question already answered, correctly
-   referenced something real from before, gave more tailored advice instead of
-   generic advice. This is the entire reason to build this — a version that never
-   improves here isn't worth the added complexity.
-3. **Came across as annoying or unsolicited** — bringing up something the farmer
-   didn't ask about, repeating itself, over-personalizing small talk. On a phone call
-   specifically, any unsolicited detail costs the farmer real time — treat this as its
-   own serious failure, not a minor quality nitpick.
-4. **Added real delay or cost** — how much extra content got added to the prompt, and
-   for phone calls specifically, whether the actual response time matches what the
-   design intended (see the speed principle in `memory-design-decisions.md`) rather
-   than just assuming it in theory.
+## Judge usefulness and harm separately
 
-A version shouldn't ship if it regresses on (1) more than a small, defined amount, or
-if it scores worse on (3) more often than it scores better on (2) — in other words, it
-shouldn't be net annoying even if it's occasionally useful.
+Review whether memory reduced repetition or improved advice, and independently review
+false recall, stale certainty, wrong account/animal attribution, sensitive retention,
+and unsupported action confirmations. Require evidence for a claimed improvement.
+A lower score on intrusive or misleading replies cannot be averaged away by more
+convenient personalization.
 
-Also check a sample by hand, not just with an AI judge — the org already has a
-two-person-plus-review process for other quality checks; reuse that here rather than
-trusting an automated score alone.
+Offline tests establish mechanical behavior. They do not measure extraction quality,
+semantic merge correctness, or real response improvement. Program owners should agree
+release criteria and review the resulting examples before rollout. Voice and doctor
+mode require their own evaluation and are not covered automatically by farmer chat.
 
-## What this test can't tell us
+## Evaluation scope after the one-farmer demo
 
-- **It's a replay, not a live test.** These farmers' real questions were asked to a
-  bot that had no memory, so they never had the chance to actually rely on it being
-  there (skip re-explaining something, for instance) — this test can only show
-  "would adding memory to this exact past moment have helped or hurt," not how real
-  conversations would change if farmers knew the bot remembered them. Good as a
-  before-launch check, not a replacement for watching it work with real farmers after
-  launch.
-- Replies generated "with memory" use whichever model/prompt is current when the test
-  runs, not the exact one that was live back then (both change often) — some
-  difference from the historical reply is expected and isn't itself a sign of a
-  problem.
+See [the demo review](demo-review-2026-09-09.md) for actual failures. The next run
+should first use the full Amul agent/prompt and the model configured for replies;
+the local Gemma smoke test alone cannot establish that the production agent makes
+the same tool choices. Record the model/provider and all prompt/config versions.
 
-## Open questions
+Completed first batch: **20 farmers, 100 held-out turns**, with a frozen memory
+snapshot per cutoff. Choose farmers by conversation depth and coverage rather than
+cherry-picking attractive memories. Include low-memory farmers and ordinary questions.
+Use all prior turns needed to understand a held-out question, but never train on the
+question or later replies. Fixture live tools with identical question-time responses
+for memory-off/on runs; no bookings, orders or messages should be executed by a replay.
 
-- Who has access to Amul's production logging system for this?
-- How many multi-day repeat farmers do we actually need for this to mean anything?
-  Not sized yet — depends on how common they turn out to be once we filter to
-  "different days," which hasn't been checked.
-- Should the vet-facing mode be tested in the same pass, or later?
+Measure three things separately:
+
+1. **Memory construction:** can reviewers find important source details in current
+   episodes? Inspect late facts such as missing receipts, incorrect omissions,
+   unnecessary retention, overly broad safety refusals, duplicate fragments and
+   incorrect merges. Check every supplied source reference, but remember that a valid
+   reference does not prove its facts were retained. Include a few repeated generation
+   runs to measure variability.
+2. **Agent retrieval:** does an ordinary list/count question use list and follow its
+   cursor? Does search broaden when a specific fact is absent? Does direct read open
+   the suggested chunk? Compare returned chunks with stored text byte-for-byte. Test
+   missing metadata tags and independent farmer vocabularies. Tools control sizes;
+   the agent should not need to calculate budgets or offsets.
+3. **Reply quality:** fewer repeated questions and better continuity, judged separately
+   from false recall, unsupported bookings, wrong animal attribution and unnecessary
+   historical details in live-record answers. Blind the memory condition for human
+   reviewers where practical. Do not average harmful recall away against convenience.
+
+Report paired outcomes, not only average scores. Include failure transcripts, all
+model/tool latencies, context size, request counts, and p50/p95 from the larger sample.
+The one-farmer median is only a warm smoke-test observation. Keep exact-list
+completeness and source-detail retention as explicit release criteria.
+
+After the baseline, compare semantic-only discovery with allowing contents-guided
+reads, using the same stored episodes and tools. Add a dedicated keyword index only
+if measured failures justify it. Do not add required category labels to make tests
+easier. The first paired replay and a separate selected cross-session follow-up
+study are complete; see [the follow-up review](followup-review-2026-09-09.md).
+The follow-up study produced 2 improved, 12 equivalent and 1 worse answer, with
+no memory tool calls. Agentic retrieval therefore still needs its own test set.
+Keep these cohorts separate: the ordinary-traffic sample mostly contained current
+record lookups, while the follow-up set was deliberately selected for continuity.
+The small 10/5/3-turn extraction experiment found no recovery gain from smaller
+batches. Repeat a fixed annotated case set before changing the default of 10.
